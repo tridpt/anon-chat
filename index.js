@@ -11,12 +11,16 @@ const LIMITS = {
     maxInterestLength: 30,
     maxInterests: 10,
     maxMessageLength: 500,
+    maxReportReasonLength: 300,
+    maxBlockedClientIds: 100,
     maxQueueSize: 1000,
     maxPayloadBytes: 10_000,
     messageRate: { max: 8, windowMs: 10_000 },
     typingRate: { max: 1, windowMs: 750 },
     skipRate: { max: 5, windowMs: 10_000 },
-    loginRate: { max: 3, windowMs: 60_000 }
+    loginRate: { max: 3, windowMs: 60_000 },
+    blockRate: { max: 5, windowMs: 60_000 },
+    reportRate: { max: 3, windowMs: 60 * 60_000 }
 };
 
 function isPlainObject(value) {
@@ -27,6 +31,10 @@ function cleanText(value) {
     return value.replace(/[\u0000-\u001F\u007F]/g, '').trim().replace(/\s+/g, ' ');
 }
 
+function isClientId(value) {
+    return typeof value === 'string' && /^[A-Za-z0-9_-]{16,64}$/.test(value);
+}
+
 function parseLogin(data) {
     if (!isPlainObject(data)) {
         return { error: 'Invalid login data.' };
@@ -34,9 +42,19 @@ function parseLogin(data) {
 
     const rawUsername = data.username ?? '';
     const rawInterests = data.interests ?? '';
+    const rawClientId = data.clientId ?? crypto.randomUUID();
+    const rawBlockedClientIds = data.blockedClientIds ?? [];
 
     if (typeof rawUsername !== 'string' || typeof rawInterests !== 'string') {
         return { error: 'Username and interests must be text.' };
+    }
+
+    if (!isClientId(rawClientId)) {
+        return { error: 'Your anonymous session is invalid.' };
+    }
+
+    if (!Array.isArray(rawBlockedClientIds) || rawBlockedClientIds.length > LIMITS.maxBlockedClientIds || !rawBlockedClientIds.every(isClientId)) {
+        return { error: 'Your blocked-user list is invalid.' };
     }
 
     if (rawUsername.length > LIMITS.maxUsernameLength || rawInterests.length > LIMITS.maxInterestsInputLength) {
@@ -56,7 +74,9 @@ function parseLogin(data) {
     return {
         value: {
             username,
-            interests: [...new Set(interests)].slice(0, LIMITS.maxInterests)
+            interests: [...new Set(interests)].slice(0, LIMITS.maxInterests),
+            clientId: rawClientId,
+            blockedClientIds: [...new Set(rawBlockedClientIds)]
         }
     };
 }
@@ -76,6 +96,23 @@ function parseMessage(value) {
     }
 
     return { value: text };
+}
+
+function parseReport(data) {
+    if (!isPlainObject(data) || typeof data.reason !== 'string') {
+        return { error: 'A report reason is required.' };
+    }
+
+    if (data.reason.length > LIMITS.maxReportReasonLength) {
+        return { error: `Report details can be at most ${LIMITS.maxReportReasonLength} characters.` };
+    }
+
+    const reason = cleanText(data.reason);
+    if (!reason) {
+        return { error: 'A report reason is required.' };
+    }
+
+    return { value: reason };
 }
 
 function createChatServer({ logger = console } = {}) {
@@ -98,6 +135,15 @@ function createChatServer({ logger = console } = {}) {
     function logError(error) {
         if (typeof logger.error === 'function') {
             logger.error(error);
+        }
+    }
+
+    function logReport(report) {
+        const message = `REPORT ${JSON.stringify(report)}`;
+        if (typeof logger.warn === 'function') {
+            logger.warn(message);
+        } else {
+            log(message);
         }
     }
 
@@ -147,7 +193,7 @@ function createChatServer({ logger = console } = {}) {
     function getBestMatchIndex(user1, startIndex, now) {
         for (let index = startIndex; index < waitingQueue.length; index++) {
             const user2 = waitingQueue[index];
-            if (user2.disconnected) continue;
+            if (user2.disconnected || !canMatch(user1, user2)) continue;
 
             const hasSharedInterest = user1.interests.some(interest => user2.interests.includes(interest));
             if (hasSharedInterest) return index;
@@ -157,10 +203,16 @@ function createChatServer({ logger = console } = {}) {
         for (let index = startIndex; index < waitingQueue.length; index++) {
             const user2 = waitingQueue[index];
             const user2WaitedLongEnough = !user2.disconnected && now - user2.joinTime >= 10_000;
-            if (!user2.disconnected && (user1WaitedLongEnough || user2WaitedLongEnough)) return index;
+            if (!user2.disconnected && canMatch(user1, user2) && (user1WaitedLongEnough || user2WaitedLongEnough)) return index;
         }
 
         return -1;
+    }
+
+    function canMatch(user1, user2) {
+        return user1.clientId !== user2.clientId
+            && !user1.blockedClientIds.has(user2.clientId)
+            && !user2.blockedClientIds.has(user1.clientId);
     }
 
     function matchUsers() {
@@ -199,8 +251,8 @@ function createChatServer({ logger = console } = {}) {
             user2.partner = user1;
 
             const sharedInterests = user1.interests.filter(interest => user2.interests.includes(interest));
-            user1.emit('matched', { partnerName: user2.username, partnerColor: user2.color, sharedInterests });
-            user2.emit('matched', { partnerName: user1.username, partnerColor: user1.color, sharedInterests });
+            user1.emit('matched', { partnerName: user2.username, partnerColor: user2.color, partnerId: user2.clientId, sharedInterests });
+            user2.emit('matched', { partnerName: user1.username, partnerColor: user1.color, partnerId: user1.clientId, sharedInterests });
             log(`Matched ${user1.username} and ${user2.username} in room ${roomId}. Shared: ${sharedInterests.join(',')}`);
         }
     }
@@ -257,6 +309,8 @@ function createChatServer({ logger = console } = {}) {
 
             socket.username = parsed.value.username;
             socket.interests = parsed.value.interests;
+            socket.clientId = parsed.value.clientId;
+            socket.blockedClientIds = new Set(parsed.value.blockedClientIds);
             socket.hasLoggedIn = true;
             enqueue(socket);
             log(`${socket.username} joined queue. Interests: ${socket.interests.join(',')}`);
@@ -310,6 +364,53 @@ function createChatServer({ logger = console } = {}) {
             removeFromQueue(socket);
             handleLeaveRoom(socket);
             enqueue(socket);
+        }));
+
+        socket.on('blockPartner', safelyHandle(socket, () => {
+            if (!socket.currentRoom || !socket.partner) {
+                sendError(socket, 'invalid_state', 'You can only block someone while you are chatting.');
+                return;
+            }
+
+            if (isRateLimited(socket, 'block', LIMITS.blockRate)) {
+                sendError(socket, 'rate_limited', 'You are blocking too quickly. Please wait a moment.');
+                return;
+            }
+
+            const partner = socket.partner;
+            socket.blockedClientIds.add(partner.clientId);
+            socket.emit('partner_blocked', { partnerName: partner.username, partnerId: partner.clientId });
+            handleLeaveRoom(socket);
+            enqueue(socket);
+            log(`${socket.username} blocked a chat partner.`);
+        }));
+
+        socket.on('reportPartner', safelyHandle(socket, data => {
+            if (!socket.currentRoom || !socket.partner) {
+                sendError(socket, 'invalid_state', 'You can only report someone while you are chatting.');
+                return;
+            }
+
+            if (isRateLimited(socket, 'report', LIMITS.reportRate)) {
+                sendError(socket, 'rate_limited', 'You have reached the report limit. Please try again later.');
+                return;
+            }
+
+            const parsed = parseReport(data);
+            if (parsed.error) {
+                sendError(socket, 'invalid_report', parsed.error);
+                return;
+            }
+
+            const partner = socket.partner;
+            logReport({
+                id: crypto.randomUUID(),
+                createdAt: new Date().toISOString(),
+                reporter: { alias: socket.username, clientId: socket.clientId },
+                reportedUser: { alias: partner.username, clientId: partner.clientId },
+                reason: parsed.value
+            });
+            socket.emit('report_received');
         }));
 
         socket.on('disconnect', () => {

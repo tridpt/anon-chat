@@ -53,16 +53,80 @@ const msgInput = document.getElementById('msg-input');
 const chatBox = document.getElementById('chat-box');
 const partnerNameEl = document.getElementById('partner-name');
 const skipBtn = document.getElementById('skip-btn');
+const reportBtn = document.getElementById('report-btn');
+const blockBtn = document.getElementById('block-btn');
 const typingIndicator = document.getElementById('typing-indicator');
 const loginError = document.getElementById('login-error');
 const waitingTitle = document.getElementById('waiting-title');
 const waitingDetail = document.getElementById('waiting-detail');
+const reportDialog = document.getElementById('report-dialog');
+const reportForm = document.getElementById('report-form');
+const reportReason = document.getElementById('report-reason');
+const reportNote = document.getElementById('report-note');
+const reportAndBlock = document.getElementById('report-and-block');
+const reportCancel = document.getElementById('report-cancel');
+
+const CLIENT_ID_KEY = 'ghostchat-client-id';
+const BLOCKED_CLIENT_IDS_KEY = 'ghostchat-blocked-client-ids';
+const CLIENT_ID_PATTERN = /^[A-Za-z0-9_-]{16,64}$/;
+const MAX_BLOCKED_CLIENT_IDS = 100;
 
 let myUsername = '';
 let myInterests = '';
 let typingTimeout = null;
 let hasActiveSession = false;
 let isInChat = false;
+let currentPartnerId = null;
+const clientId = getOrCreateClientId();
+const blockedClientIds = new Set(getBlockedClientIds());
+
+function createClientId() {
+    if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+
+    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+}
+
+function getOrCreateClientId() {
+    try {
+        const savedId = window.localStorage.getItem(CLIENT_ID_KEY);
+        if (CLIENT_ID_PATTERN.test(savedId || '')) return savedId;
+
+        const newId = createClientId();
+        window.localStorage.setItem(CLIENT_ID_KEY, newId);
+        return newId;
+    } catch {
+        return createClientId();
+    }
+}
+
+function getBlockedClientIds() {
+    try {
+        const savedIds = JSON.parse(window.localStorage.getItem(BLOCKED_CLIENT_IDS_KEY) || '[]');
+        return Array.isArray(savedIds)
+            ? savedIds.filter(id => CLIENT_ID_PATTERN.test(id)).slice(-MAX_BLOCKED_CLIENT_IDS)
+            : [];
+    } catch {
+        return [];
+    }
+}
+
+function saveBlockedClientIds() {
+    try {
+        window.localStorage.setItem(BLOCKED_CLIENT_IDS_KEY, JSON.stringify([...blockedClientIds]));
+    } catch {
+        // Blocking still works for the active session when local storage is unavailable.
+    }
+}
+
+function rememberBlockedPartner(partnerId) {
+    if (!CLIENT_ID_PATTERN.test(partnerId || '')) return;
+
+    if (!blockedClientIds.has(partnerId) && blockedClientIds.size >= MAX_BLOCKED_CLIENT_IDS) {
+        blockedClientIds.delete(blockedClientIds.values().next().value);
+    }
+    blockedClientIds.add(partnerId);
+    saveBlockedClientIds();
+}
 
 function showScreen(screenId) {
     document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
@@ -87,7 +151,12 @@ function clearLoginError() {
 function joinQueue() {
     if (!hasActiveSession || !socket.connected) return;
 
-    socket.emit('login', { username: myUsername, interests: myInterests });
+    socket.emit('login', {
+        username: myUsername,
+        interests: myInterests,
+        clientId,
+        blockedClientIds: [...blockedClientIds]
+    });
     setWaitingStatus('Looking for a partner...', 'Please wait while we connect you to someone.');
     showScreen('waiting-screen');
 }
@@ -105,6 +174,9 @@ socket.on('disconnect', () => {
     if (!hasActiveSession) return;
 
     isInChat = false;
+    currentPartnerId = null;
+    reportBtn.disabled = true;
+    blockBtn.disabled = true;
     setWaitingStatus('Reconnecting...', 'Your connection was interrupted. We will try again automatically.');
     showScreen('waiting-screen');
 });
@@ -119,6 +191,8 @@ socket.on('app_error', (error) => {
     const message = error?.message || 'Something went wrong. Please try again.';
 
     if (isInChat) {
+        blockBtn.disabled = false;
+        reportBtn.disabled = false;
         outputSystemMessage(message);
         return;
     }
@@ -167,6 +241,9 @@ socket.on('matched', (partnerInfo) => {
     chatBox.innerHTML = ''; // clear chat
     typingIndicator.style.display = 'none'; // hide typing
     isInChat = true;
+    currentPartnerId = partnerInfo.partnerId || null;
+    reportBtn.disabled = false;
+    blockBtn.disabled = false;
 
     partnerNameEl.innerText = partnerInfo.partnerName;
     partnerNameEl.style.color = partnerInfo.partnerColor;
@@ -185,6 +262,9 @@ socket.on('partner_left', () => {
     outputSystemMessage(`Your partner has left the chat.`);
     typingIndicator.style.display = 'none';
     isInChat = false;
+    currentPartnerId = null;
+    reportBtn.disabled = true;
+    blockBtn.disabled = true;
     
     setTimeout(() => {
         if (hasActiveSession && socket.connected) {
@@ -200,10 +280,65 @@ skipBtn.addEventListener('click', () => {
     if (!socket.connected) return;
 
     isInChat = false;
+    currentPartnerId = null;
+    reportBtn.disabled = true;
+    blockBtn.disabled = true;
     typingIndicator.style.display = 'none';
     socket.emit('skip');
     setWaitingStatus('Looking for a partner...', 'Finding someone new for you.');
     showScreen('waiting-screen');
+});
+
+function blockCurrentPartner() {
+    if (!isInChat || !currentPartnerId || !socket.connected || blockBtn.disabled) return;
+
+    rememberBlockedPartner(currentPartnerId);
+    blockBtn.disabled = true;
+    reportBtn.disabled = true;
+    socket.emit('blockPartner');
+}
+
+blockBtn.addEventListener('click', () => {
+    if (!isInChat || !currentPartnerId) return;
+
+    const confirmed = window.confirm('Block this person and find another match?');
+    if (confirmed) blockCurrentPartner();
+});
+
+reportBtn.addEventListener('click', () => {
+    if (!isInChat || !currentPartnerId) return;
+
+    reportNote.value = '';
+    reportAndBlock.checked = true;
+    reportDialog.showModal();
+});
+
+reportCancel.addEventListener('click', () => reportDialog.close());
+
+reportForm.addEventListener('submit', event => {
+    event.preventDefault();
+    if (!isInChat || !currentPartnerId || !socket.connected) return;
+
+    const note = reportNote.value.trim();
+    const reason = note ? `${reportReason.value}: ${note}` : reportReason.value;
+    socket.emit('reportPartner', { reason });
+    reportDialog.close();
+
+    if (reportAndBlock.checked) blockCurrentPartner();
+});
+
+socket.on('partner_blocked', () => {
+    isInChat = false;
+    currentPartnerId = null;
+    typingIndicator.style.display = 'none';
+    setWaitingStatus('Looking for a partner...', 'The person was blocked. Finding someone new for you.');
+    showScreen('waiting-screen');
+});
+
+socket.on('report_received', () => {
+    if (isInChat) {
+        outputSystemMessage('Your report was received. Thank you for helping keep GhostChat safer.');
+    }
 });
 
 // 4. Chatting & Typing Logic

@@ -19,8 +19,8 @@ function waitForEvent(socket, event, timeoutMs = 1_500) {
     });
 }
 
-async function createTestServer(t) {
-    const chat = createChatServer({ logger: { info() {}, error() {} } });
+async function createTestServer(t, logger = { info() {}, error() {} }) {
+    const chat = createChatServer({ logger });
     await new Promise((resolve, reject) => {
         chat.server.once('error', reject);
         chat.server.listen(0, '127.0.0.1', resolve);
@@ -133,4 +133,62 @@ test('rate limits rapid message bursts', async t => {
         code: 'rate_limited',
         message: 'You are sending messages too quickly.'
     });
+});
+
+test('does not rematch a client with a blocked partner', async t => {
+    const url = await createTestServer(t);
+    const alice = await connectClient(t, url);
+    const bob = await connectClient(t, url);
+    const cara = await connectClient(t, url);
+    const aliceId = 'client-alice-12345';
+    const bobId = 'client-bob-123456';
+    const caraId = 'client-cara-12345';
+
+    const aliceMatched = waitForEvent(alice, 'matched');
+    const bobMatched = waitForEvent(bob, 'matched');
+    alice.emit('login', { username: 'Alice', interests: 'games', clientId: aliceId });
+    bob.emit('login', { username: 'Bob', interests: 'games', clientId: bobId });
+    await Promise.all([aliceMatched, bobMatched]);
+
+    const aliceBlocked = waitForEvent(alice, 'partner_blocked');
+    const bobLeft = waitForEvent(bob, 'partner_left');
+    alice.emit('blockPartner');
+    assert.deepEqual(await aliceBlocked, { partnerName: 'Bob', partnerId: bobId });
+    await bobLeft;
+
+    bob.emit('skip');
+    const aliceRematched = waitForEvent(alice, 'matched');
+    const caraMatched = waitForEvent(cara, 'matched');
+    cara.emit('login', { username: 'Cara', interests: 'games', clientId: caraId });
+
+    assert.equal((await aliceRematched).partnerName, 'Cara');
+    assert.equal((await caraMatched).partnerName, 'Alice');
+});
+
+test('accepts a report and writes a structured moderation log entry', async t => {
+    const reports = [];
+    const url = await createTestServer(t, {
+        info() {},
+        error() {},
+        warn(message) { reports.push(message); }
+    });
+    const alice = await connectClient(t, url);
+    const bob = await connectClient(t, url);
+
+    const aliceMatched = waitForEvent(alice, 'matched');
+    const bobMatched = waitForEvent(bob, 'matched');
+    alice.emit('login', { username: 'Alice', interests: 'books', clientId: 'client-alice-12345' });
+    bob.emit('login', { username: 'Bob', interests: 'books', clientId: 'client-bob-123456' });
+    await Promise.all([aliceMatched, bobMatched]);
+
+    const reportReceived = waitForEvent(alice, 'report_received');
+    alice.emit('reportPartner', { reason: 'Harassment or bullying: Repeated insults' });
+    await reportReceived;
+
+    assert.equal(reports.length, 1);
+    const report = JSON.parse(reports[0].replace(/^REPORT /, ''));
+    assert.equal(report.reporter.alias, 'Alice');
+    assert.equal(report.reportedUser.alias, 'Bob');
+    assert.equal(report.reason, 'Harassment or bullying: Repeated insults');
+    assert.match(report.createdAt, /^\d{4}-\d{2}-\d{2}T/);
 });

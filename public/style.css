@@ -319,6 +319,40 @@ body {
     background: rgba(255, 255, 255, 0.2);
 }
 
+.actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.btn-danger {
+    background: rgba(239, 68, 68, 0.14);
+    color: #fecaca;
+    border: 1px solid rgba(248, 113, 113, 0.45);
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+
+.btn-danger:hover {
+    background: var(--danger);
+    border-color: var(--danger);
+    color: white;
+}
+
+.btn-danger:disabled,
+.btn-secondary:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+}
+
 #skip-btn:hover {
     background: var(--danger);
     border-color: var(--danger);
@@ -437,6 +471,81 @@ body {
     50% { transform: translateY(-3px); opacity: 1; }
 }
 
+/* Report dialog */
+.report-dialog {
+    width: min(92vw, 460px);
+    color: var(--text-primary);
+    background: #172033;
+    border: 1px solid var(--glass-border);
+    border-radius: 16px;
+    padding: 0;
+    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.55);
+}
+
+.report-dialog::backdrop {
+    background: rgba(2, 6, 23, 0.72);
+    backdrop-filter: blur(4px);
+}
+
+.report-form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 28px;
+}
+
+.report-form h2 {
+    font-size: 21px;
+}
+
+.report-form > p,
+.report-form label {
+    color: var(--text-secondary);
+    font-size: 14px;
+    line-height: 1.45;
+}
+
+.report-form select,
+.report-form textarea {
+    width: 100%;
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--glass-border);
+    border-radius: 10px;
+    padding: 12px;
+    font: inherit;
+    outline: none;
+}
+
+.report-form textarea {
+    min-height: 96px;
+    resize: vertical;
+}
+
+.report-form select:focus,
+.report-form textarea:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.2);
+}
+
+.checkbox-label {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+}
+
+.checkbox-label input {
+    margin-top: 3px;
+    accent-color: var(--accent);
+}
+
+.dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 6px;
+}
+
 /* Input Area */
 .chat-input-area {
     padding: 20px 30px;
@@ -503,5 +612,28 @@ body {
     }
     .orb {
         display: none;
+    }
+    .chat-header {
+        padding: 16px;
+    }
+    .actions {
+        gap: 6px;
+    }
+    .actions .btn-secondary,
+    .actions .btn-danger {
+        width: 40px;
+        height: 40px;
+        padding: 0;
+        font-size: 0;
+    }
+    .actions .btn-secondary i,
+    .actions .btn-danger i {
+        font-size: 15px;
+    }
+    .chat-box {
+        padding: 20px;
+    }
+    .chat-input-area {
+        padding: 16px;
     }
 }

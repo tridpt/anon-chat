@@ -27,7 +27,7 @@
                     <p class="subtitle">Enter your alias and interests to find a chat partner.</p>
                     <form id="login-form">
                         <input type="text" id="username-input" placeholder="Your Alias..." required autocomplete="off" maxlength="20">
-                        <input type="text" id="interests-input" placeholder="Interests (e.g., anime, code, music)" autocomplete="off">
+                        <input type="text" id="interests-input" placeholder="Interests (e.g., anime, code, music)" autocomplete="off" maxlength="200">
                         <button type="submit" class="btn-primary">Start Chatting</button>
                     </form>
                     <p id="login-error" class="form-error" role="status" aria-live="polite" hidden></p>
@@ -56,6 +56,12 @@
                         </div>
                     </div>
                     <div class="actions">
+                        <button id="report-btn" type="button" class="btn-secondary" title="Report this person">
+                            <i class="fa-solid fa-flag"></i> Report
+                        </button>
+                        <button id="block-btn" type="button" class="btn-danger" title="Block this person and find someone else">
+                            <i class="fa-solid fa-ban"></i> Block
+                        </button>
                         <button id="skip-btn" class="btn-secondary" title="Skip to next person">
                             <i class="fa-solid fa-forward-step"></i> Skip
                         </button>
@@ -79,6 +85,7 @@
                         id="msg-input" 
                         placeholder="Type a mysterious message..." 
                         autocomplete="off" 
+                        maxlength="500"
                         required 
                     />
                     <button type="submit" class="send-btn">
@@ -86,6 +93,31 @@
                     </button>
                 </form>
             </div>
+
+            <dialog id="report-dialog" class="report-dialog" aria-labelledby="report-title">
+                <form id="report-form" class="report-form">
+                    <h2 id="report-title">Report this person</h2>
+                    <p>Your report is sent to the server log for moderator review.</p>
+                    <label for="report-reason">Reason</label>
+                    <select id="report-reason" required>
+                        <option value="Harassment or bullying">Harassment or bullying</option>
+                        <option value="Hate or discrimination">Hate or discrimination</option>
+                        <option value="Sexual or explicit content">Sexual or explicit content</option>
+                        <option value="Spam or scam">Spam or scam</option>
+                        <option value="Other safety concern">Other safety concern</option>
+                    </select>
+                    <label for="report-note">Additional details (optional)</label>
+                    <textarea id="report-note" maxlength="240" placeholder="Briefly describe what happened."></textarea>
+                    <label class="checkbox-label">
+                        <input id="report-and-block" type="checkbox" checked>
+                        Block this person and find another match
+                    </label>
+                    <div class="dialog-actions">
+                        <button id="report-cancel" type="button" class="btn-secondary">Cancel</button>
+                        <button type="submit" class="btn-danger">Send report</button>
+                    </div>
+                </form>
+            </dialog>
 
         </main>
     </div>
