@@ -100,7 +100,7 @@ function renderReports(reports) {
     if (!reports.length) {
         const empty = document.createElement('p');
         empty.className = 'empty-state';
-        empty.innerText = 'No reports match this filter.';
+        empty.innerText = 'No reports yet. New reports will appear here after a user submits one in chat.';
         reportsContainer.appendChild(empty);
         return;
     }
