@@ -24,6 +24,7 @@ const LIMITS = {
     reportRate: { max: 3, windowMs: 60 * 60_000 }
 };
 const REPORT_STATUSES = new Set(['new', 'reviewed', 'resolved']);
+const LANGUAGES = new Set(['any', 'vi', 'en']);
 
 function isPlainObject(value) {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -44,11 +45,16 @@ function parseLogin(data) {
 
     const rawUsername = data.username ?? '';
     const rawInterests = data.interests ?? '';
+    const rawLanguage = data.language ?? 'any';
     const rawClientId = data.clientId ?? crypto.randomUUID();
     const rawBlockedClientIds = data.blockedClientIds ?? [];
 
-    if (typeof rawUsername !== 'string' || typeof rawInterests !== 'string') {
-        return { error: 'Username and interests must be text.' };
+    if (typeof rawUsername !== 'string' || typeof rawInterests !== 'string' || typeof rawLanguage !== 'string') {
+        return { error: 'Username, interests, and language must be text.' };
+    }
+
+    if (!LANGUAGES.has(rawLanguage)) {
+        return { error: 'Choose a valid language preference.' };
     }
 
     if (!isClientId(rawClientId)) {
@@ -77,6 +83,7 @@ function parseLogin(data) {
         value: {
             username,
             interests: [...new Set(interests)].slice(0, LIMITS.maxInterests),
+            language: rawLanguage,
             clientId: rawClientId,
             blockedClientIds: [...new Set(rawBlockedClientIds)]
         }
@@ -336,10 +343,24 @@ function createChatServer({
             if (user2.disconnected || !canMatch(user1, user2)) continue;
 
             const hasSharedInterest = user1.interests.some(interest => user2.interests.includes(interest));
+            if (hasSharedInterest && hasCompatibleLanguage(user1, user2)) return index;
+        }
+
+        for (let index = startIndex; index < waitingQueue.length; index++) {
+            const user2 = waitingQueue[index];
+            if (user2.disconnected || !canMatch(user1, user2)) continue;
+
+            const hasSharedInterest = user1.interests.some(interest => user2.interests.includes(interest));
             if (hasSharedInterest) return index;
         }
 
         const user1WaitedLongEnough = now - user1.joinTime >= 10_000;
+        for (let index = startIndex; index < waitingQueue.length; index++) {
+            const user2 = waitingQueue[index];
+            const user2WaitedLongEnough = !user2.disconnected && now - user2.joinTime >= 10_000;
+            if (!user2.disconnected && canMatch(user1, user2) && hasCompatibleLanguage(user1, user2) && (user1WaitedLongEnough || user2WaitedLongEnough)) return index;
+        }
+
         for (let index = startIndex; index < waitingQueue.length; index++) {
             const user2 = waitingQueue[index];
             const user2WaitedLongEnough = !user2.disconnected && now - user2.joinTime >= 10_000;
@@ -353,6 +374,10 @@ function createChatServer({
         return user1.clientId !== user2.clientId
             && !user1.blockedClientIds.has(user2.clientId)
             && !user2.blockedClientIds.has(user1.clientId);
+    }
+
+    function hasCompatibleLanguage(user1, user2) {
+        return user1.language === 'any' || user2.language === 'any' || user1.language === user2.language;
     }
 
     function matchUsers() {
@@ -391,8 +416,8 @@ function createChatServer({
             user2.partner = user1;
 
             const sharedInterests = user1.interests.filter(interest => user2.interests.includes(interest));
-            user1.emit('matched', { partnerName: user2.username, partnerColor: user2.color, partnerId: user2.clientId, sharedInterests });
-            user2.emit('matched', { partnerName: user1.username, partnerColor: user1.color, partnerId: user1.clientId, sharedInterests });
+            user1.emit('matched', { partnerName: user2.username, partnerColor: user2.color, partnerId: user2.clientId, partnerLanguage: user2.language, sharedInterests });
+            user2.emit('matched', { partnerName: user1.username, partnerColor: user1.color, partnerId: user1.clientId, partnerLanguage: user1.language, sharedInterests });
             log(`Matched ${user1.username} and ${user2.username} in room ${roomId}. Shared: ${sharedInterests.join(',')}`);
         }
     }
@@ -452,6 +477,7 @@ function createChatServer({
 
             socket.username = parsed.value.username;
             socket.interests = parsed.value.interests;
+            socket.language = parsed.value.language;
             socket.clientId = parsed.value.clientId;
             socket.blockedClientIds = new Set(parsed.value.blockedClientIds);
             socket.hasLoggedIn = true;

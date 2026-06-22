@@ -47,6 +47,7 @@ const chatScreen = document.getElementById('chat-screen');
 // Elements
 const loginForm = document.getElementById('login-form');
 const usernameInput = document.getElementById('username-input');
+const languageInput = document.getElementById('language-input');
 const interestsInput = document.getElementById('interests-input');
 const chatForm = document.getElementById('chat-form');
 const msgInput = document.getElementById('msg-input');
@@ -65,6 +66,8 @@ const reportReason = document.getElementById('report-reason');
 const reportNote = document.getElementById('report-note');
 const reportAndBlock = document.getElementById('report-and-block');
 const reportCancel = document.getElementById('report-cancel');
+const icebreakerPanel = document.getElementById('icebreaker-panel');
+const icebreakerPrompts = document.getElementById('icebreaker-prompts');
 const manageBlocksBtn = document.getElementById('manage-blocks-btn');
 const blockedDialog = document.getElementById('blocked-dialog');
 const blockedList = document.getElementById('blocked-list');
@@ -78,6 +81,7 @@ const MAX_BLOCKED_CLIENT_IDS = 100;
 
 let myUsername = '';
 let myInterests = '';
+let myLanguage = 'any';
 let typingTimeout = null;
 let hasActiveSession = false;
 let isInChat = false;
@@ -86,6 +90,33 @@ let currentPartnerName = '';
 const clientId = getOrCreateClientId();
 const blockedPartners = getBlockedPartners();
 const blockedClientIds = new Set(blockedPartners.map(partner => partner.id));
+
+const ICEBREAKERS = {
+    vi: {
+        shared: interest => [
+            `Bạn bắt đầu thích ${interest} từ khi nào?`,
+            `Điều gì ở ${interest} khiến bạn thích nhất?`,
+            `Bạn sẽ giới thiệu ${interest} cho người mới bắt đầu như thế nào?`
+        ],
+        general: [
+            'Hôm nay có chuyện gì vui với bạn không?',
+            'Bạn thường làm gì để thư giãn?',
+            'Nếu được đi bất cứ đâu cuối tuần này, bạn sẽ chọn đâu?'
+        ]
+    },
+    en: {
+        shared: interest => [
+            `How did you get into ${interest}?`,
+            `What do you enjoy most about ${interest}?`,
+            `What would you recommend to someone new to ${interest}?`
+        ],
+        general: [
+            'What has been the best part of your day?',
+            'What do you usually do to unwind?',
+            'If you could go anywhere this weekend, where would you choose?'
+        ]
+    }
+};
 
 function createClientId() {
     if (window.crypto?.randomUUID) return window.crypto.randomUUID();
@@ -198,6 +229,38 @@ function showScreen(screenId) {
     document.getElementById(screenId).classList.add('active');
 }
 
+function getIcebreakerLanguage(partnerLanguage) {
+    if (myLanguage === 'vi' || partnerLanguage === 'vi') return 'vi';
+    return 'en';
+}
+
+function hideIcebreakers() {
+    icebreakerPanel.hidden = true;
+    icebreakerPrompts.innerHTML = '';
+}
+
+function showIcebreakers(partnerInfo) {
+    const language = getIcebreakerLanguage(partnerInfo.partnerLanguage);
+    const sharedInterest = partnerInfo.sharedInterests?.[0];
+    const prompts = sharedInterest
+        ? ICEBREAKERS[language].shared(sharedInterest)
+        : ICEBREAKERS[language].general;
+
+    icebreakerPrompts.innerHTML = '';
+    prompts.forEach(prompt => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'icebreaker-prompt';
+        button.innerText = prompt;
+        button.addEventListener('click', () => {
+            msgInput.value = prompt;
+            msgInput.focus();
+        });
+        icebreakerPrompts.appendChild(button);
+    });
+    icebreakerPanel.hidden = false;
+}
+
 function setWaitingStatus(title, detail) {
     waitingTitle.innerText = title;
     waitingDetail.innerText = detail;
@@ -219,6 +282,7 @@ function joinQueue() {
     socket.emit('login', {
         username: myUsername,
         interests: myInterests,
+        language: myLanguage,
         clientId,
         blockedClientIds: [...blockedClientIds]
     });
@@ -236,6 +300,7 @@ socket.on('connect_error', () => {
 
 socket.on('disconnect', () => {
     typingIndicator.style.display = 'none';
+    hideIcebreakers();
     if (!hasActiveSession) return;
 
     isInChat = false;
@@ -289,6 +354,7 @@ loginForm.addEventListener('submit', (e) => {
     initAudio();
 
     myInterests = interestsInput.value.trim();
+    myLanguage = languageInput.value;
     hasActiveSession = true;
     isInChat = false;
     clearLoginError();
@@ -317,6 +383,7 @@ socket.on('matched', (partnerInfo) => {
     
     showScreen('chat-screen');
     playBeep('match'); // Play sound
+    showIcebreakers(partnerInfo);
     
     let msg = `You have been connected with ${partnerInfo.partnerName}.`;
     if (partnerInfo.sharedInterests && partnerInfo.sharedInterests.length > 0) {
@@ -328,6 +395,7 @@ socket.on('matched', (partnerInfo) => {
 socket.on('partner_left', () => {
     outputSystemMessage(`Your partner has left the chat.`);
     typingIndicator.style.display = 'none';
+    hideIcebreakers();
     isInChat = false;
     currentPartnerId = null;
     currentPartnerName = '';
@@ -353,6 +421,7 @@ skipBtn.addEventListener('click', () => {
     reportBtn.disabled = true;
     blockBtn.disabled = true;
     typingIndicator.style.display = 'none';
+    hideIcebreakers();
     socket.emit('skip');
     setWaitingStatus('Looking for a partner...', 'Finding someone new for you.');
     showScreen('waiting-screen');
@@ -408,6 +477,7 @@ socket.on('partner_blocked', () => {
     currentPartnerId = null;
     currentPartnerName = '';
     typingIndicator.style.display = 'none';
+    hideIcebreakers();
     setWaitingStatus('Looking for a partner...', 'The person was blocked. Finding someone new for you.');
     showScreen('waiting-screen');
 });
@@ -440,6 +510,7 @@ socket.on('stop_typing', () => {
 });
 
 socket.on('message', (msg) => {
+    hideIcebreakers();
     // If we receive a message from partner, stop their typing indicator
     if (msg.username !== myUsername) {
         typingIndicator.style.display = 'none';

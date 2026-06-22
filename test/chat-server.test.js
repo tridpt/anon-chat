@@ -101,6 +101,28 @@ test('rejects malformed login data without dropping the server connection', asyn
     assert.equal(client.connected, true);
 });
 
+test('validates language preferences and shares them with a match', async t => {
+    const url = await createTestServer(t);
+    const invalidClient = await connectClient(t, url);
+
+    const invalidLanguage = waitForEvent(invalidClient, 'app_error');
+    invalidClient.emit('login', { username: 'Invalid', interests: 'music', language: 'fr' });
+    assert.deepEqual(await invalidLanguage, {
+        code: 'invalid_login',
+        message: 'Choose a valid language preference.'
+    });
+
+    const alice = await connectClient(t, url);
+    const bob = await connectClient(t, url);
+    const aliceMatched = waitForEvent(alice, 'matched');
+    const bobMatched = waitForEvent(bob, 'matched');
+    alice.emit('login', { username: 'Alice', interests: 'music', language: 'vi', clientId: 'client-alice-12345' });
+    bob.emit('login', { username: 'Bob', interests: 'music', language: 'vi', clientId: 'client-bob-123456' });
+
+    assert.equal((await aliceMatched).partnerLanguage, 'vi');
+    assert.equal((await bobMatched).partnerLanguage, 'vi');
+});
+
 test('rejects oversized messages instead of broadcasting them', async t => {
     const url = await createTestServer(t);
     const alice = await connectClient(t, url);

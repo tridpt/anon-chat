@@ -187,7 +187,8 @@ body {
     gap: 16px;
 }
 
-#login-form input {
+#login-form input,
+#login-form select {
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid var(--glass-border);
     border-radius: 12px;
@@ -199,7 +200,13 @@ body {
     text-align: center;
 }
 
-#login-form input:focus {
+#login-form select {
+    cursor: pointer;
+    appearance: auto;
+}
+
+#login-form input:focus,
+#login-form select:focus {
     background: rgba(255, 255, 255, 0.1);
     border-color: var(--accent);
     box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.2);
@@ -393,6 +400,66 @@ body {
 .chat-box::-webkit-scrollbar-thumb {
     background-color: var(--glass-border);
     border-radius: 10px;
+}
+
+/* Icebreakers */
+.icebreaker-panel {
+    margin: 16px 30px 0;
+    padding: 14px 16px;
+    border: 1px solid rgba(167, 139, 250, 0.32);
+    border-radius: 14px;
+    background: rgba(139, 92, 246, 0.1);
+}
+
+.icebreaker-heading {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.icebreaker-spark {
+    display: grid;
+    width: 32px;
+    height: 32px;
+    place-items: center;
+    border-radius: 10px;
+    color: #ddd6fe;
+    background: rgba(139, 92, 246, 0.28);
+}
+
+.icebreaker-heading h3 {
+    margin: 0 0 2px;
+    font-size: 14px;
+}
+
+.icebreaker-heading p {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.icebreaker-prompts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.icebreaker-prompt {
+    padding: 8px 10px;
+    color: #ede9fe;
+    border: 1px solid rgba(196, 181, 253, 0.28);
+    border-radius: 999px;
+    background: rgba(15, 23, 42, 0.3);
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.icebreaker-prompt:hover {
+    border-color: rgba(221, 214, 254, 0.8);
+    background: rgba(139, 92, 246, 0.25);
 }
 
 /* Messages */
@@ -686,6 +753,9 @@ body {
     }
     .chat-box {
         padding: 20px;
+    }
+    .icebreaker-panel {
+        margin: 12px 16px 0;
     }
     .chat-input-area {
         padding: 16px;
