@@ -123,6 +123,18 @@ test('validates language preferences and shares them with a match', async t => {
     assert.equal((await bobMatched).partnerLanguage, 'vi');
 });
 
+test('publishes queue status to people waiting for a match', async t => {
+    const url = await createTestServer(t);
+    const client = await connectClient(t, url);
+
+    const queueStatus = waitForEvent(client, 'queue_status');
+    client.emit('login', { username: 'Waiting', interests: 'music' });
+    assert.deepEqual(await queueStatus, {
+        waitingCount: 1,
+        estimatedWaitSeconds: null
+    });
+});
+
 test('rejects oversized messages instead of broadcasting them', async t => {
     const url = await createTestServer(t);
     const alice = await connectClient(t, url);

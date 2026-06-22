@@ -60,6 +60,8 @@ const typingIndicator = document.getElementById('typing-indicator');
 const loginError = document.getElementById('login-error');
 const waitingTitle = document.getElementById('waiting-title');
 const waitingDetail = document.getElementById('waiting-detail');
+const queueStatus = document.getElementById('queue-status');
+const sharedInterestsEl = document.getElementById('shared-interests');
 const reportDialog = document.getElementById('report-dialog');
 const reportForm = document.getElementById('report-form');
 const reportReason = document.getElementById('report-reason');
@@ -266,6 +268,36 @@ function setWaitingStatus(title, detail) {
     waitingDetail.innerText = detail;
 }
 
+function setQueueStatus(status) {
+    const waitingCount = Number(status?.waitingCount) || 0;
+    const countMessage = waitingCount <= 1
+        ? 'No one else is searching right now.'
+        : `${waitingCount} people are looking for a chat partner.`;
+    const estimate = Number(status?.estimatedWaitSeconds);
+    const estimateMessage = Number.isFinite(estimate) && estimate > 0
+        ? ` Typical wait: about ${estimate} seconds.`
+        : '';
+    queueStatus.innerText = `${countMessage}${estimateMessage}`;
+}
+
+function clearSharedInterests() {
+    sharedInterestsEl.innerHTML = '';
+    sharedInterestsEl.hidden = true;
+}
+
+function renderSharedInterests(interests) {
+    clearSharedInterests();
+    if (!Array.isArray(interests) || !interests.length) return;
+
+    interests.forEach(interest => {
+        const chip = document.createElement('span');
+        chip.className = 'interest-chip';
+        chip.innerText = interest;
+        sharedInterestsEl.appendChild(chip);
+    });
+    sharedInterestsEl.hidden = false;
+}
+
 function showLoginError(message) {
     loginError.innerText = message;
     loginError.hidden = false;
@@ -294,6 +326,7 @@ socket.on('connect', joinQueue);
 
 socket.on('connect_error', () => {
     if (!hasActiveSession) return;
+    queueStatus.innerText = '';
     setWaitingStatus('Connection problem', 'We could not reach the chat server. Retrying...');
     showScreen('waiting-screen');
 });
@@ -301,6 +334,7 @@ socket.on('connect_error', () => {
 socket.on('disconnect', () => {
     typingIndicator.style.display = 'none';
     hideIcebreakers();
+    clearSharedInterests();
     if (!hasActiveSession) return;
 
     isInChat = false;
@@ -315,7 +349,12 @@ socket.on('disconnect', () => {
 socket.on('queued', () => {
     if (!isInChat) {
         setWaitingStatus('Looking for a partner...', 'Please wait while we connect you to someone.');
+        queueStatus.innerText = 'Joining the queue...';
     }
+});
+
+socket.on('queue_status', status => {
+    if (!isInChat && hasActiveSession) setQueueStatus(status);
 });
 
 socket.on('app_error', (error) => {
@@ -359,6 +398,7 @@ loginForm.addEventListener('submit', (e) => {
     isInChat = false;
     clearLoginError();
     setWaitingStatus('Connecting...', 'Please wait while we reach the chat server.');
+    queueStatus.innerText = '';
     showScreen('waiting-screen');
 
     if (socket.connected) {
@@ -377,6 +417,7 @@ socket.on('matched', (partnerInfo) => {
     currentPartnerName = getBlockedPartnerName(partnerInfo.partnerName);
     reportBtn.disabled = false;
     blockBtn.disabled = false;
+    renderSharedInterests(partnerInfo.sharedInterests);
 
     partnerNameEl.innerText = partnerInfo.partnerName;
     partnerNameEl.style.color = partnerInfo.partnerColor;
@@ -401,6 +442,7 @@ socket.on('partner_left', () => {
     currentPartnerName = '';
     reportBtn.disabled = true;
     blockBtn.disabled = true;
+    clearSharedInterests();
     
     setTimeout(() => {
         if (hasActiveSession && socket.connected) {
@@ -422,6 +464,7 @@ skipBtn.addEventListener('click', () => {
     blockBtn.disabled = true;
     typingIndicator.style.display = 'none';
     hideIcebreakers();
+    clearSharedInterests();
     socket.emit('skip');
     setWaitingStatus('Looking for a partner...', 'Finding someone new for you.');
     showScreen('waiting-screen');
@@ -478,6 +521,7 @@ socket.on('partner_blocked', () => {
     currentPartnerName = '';
     typingIndicator.style.display = 'none';
     hideIcebreakers();
+    clearSharedInterests();
     setWaitingStatus('Looking for a partner...', 'The person was blocked. Finding someone new for you.');
     showScreen('waiting-screen');
 });

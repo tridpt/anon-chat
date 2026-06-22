@@ -6,6 +6,7 @@ Anonymous, one-on-one chat with interest-based matching. GhostChat does not crea
 
 - Match two people by shared interests while prioritizing compatible Vietnamese, English, or any-language preferences.
 - Offer localized icebreaker prompts after a match, based on shared interests when possible.
+- Show the live number of people waiting and a wait-time estimate based on recent matches.
 - Skip a chat, block a current partner, and manage or undo blocks in the browser.
 - Report a current partner with a reason, then review and resolve reports in `/admin`.
 - Server-side validation, message-size limits, queue limits, and per-socket flood controls.

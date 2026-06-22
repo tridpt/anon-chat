@@ -266,6 +266,12 @@ body {
     color: var(--text-secondary);
 }
 
+.waiting-card .queue-status {
+    min-height: 20px;
+    color: #c4b5fd;
+    font-size: 13px;
+}
+
 /* --- CHAT SCREEN --- */
 .chat-header {
     padding: 20px 30px;
@@ -306,6 +312,26 @@ body {
     display: flex;
     align-items: center;
     gap: 6px;
+}
+
+.shared-interests {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-top: 8px;
+}
+
+.interest-chip {
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding: 3px 7px;
+    color: #ddd6fe;
+    border: 1px solid rgba(196, 181, 253, 0.22);
+    border-radius: 999px;
+    background: rgba(139, 92, 246, 0.14);
+    font-size: 11px;
 }
 
 .pulse {

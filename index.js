@@ -197,6 +197,7 @@ function createChatServer({
     const reportStore = createReportStore(dataDir);
 
     let waitingQueue = [];
+    let averageMatchWaitMs = null;
 
     function log(message) {
         if (typeof logger.info === 'function') {
@@ -320,6 +321,24 @@ function createChatServer({
         socket.isQueued = false;
     }
 
+    function getQueueStatus() {
+        const estimatedWaitSeconds = averageMatchWaitMs === null
+            ? null
+            : Math.max(5, Math.min(120, Math.round(averageMatchWaitMs / 5_000) * 5));
+        return { waitingCount: waitingQueue.length, estimatedWaitSeconds };
+    }
+
+    function broadcastQueueStatus() {
+        io.emit('queue_status', getQueueStatus());
+    }
+
+    function recordMatchWait(user1, user2, now) {
+        const averageWaitForPair = ((now - user1.joinTime) + (now - user2.joinTime)) / 2;
+        averageMatchWaitMs = averageMatchWaitMs === null
+            ? averageWaitForPair
+            : (averageMatchWaitMs * 0.75) + (averageWaitForPair * 0.25);
+    }
+
     function enqueue(socket) {
         if (socket.disconnected || socket.currentRoom) return false;
         if (socket.isQueued) return true;
@@ -333,7 +352,7 @@ function createChatServer({
         socket.isQueued = true;
         waitingQueue.push(socket);
         socket.emit('queued');
-        matchUsers();
+        if (!matchUsers()) broadcastQueueStatus();
         return true;
     }
 
@@ -381,11 +400,14 @@ function createChatServer({
     }
 
     function matchUsers() {
+        let queueChanged = false;
+        const queueLengthBeforeCleanup = waitingQueue.length;
         waitingQueue = waitingQueue.filter(socket => {
             const canWait = !socket.disconnected && socket.isQueued && !socket.currentRoom;
             if (!canWait) socket.isQueued = false;
             return canWait;
         });
+        if (waitingQueue.length !== queueLengthBeforeCleanup) queueChanged = true;
 
         const now = Date.now();
         let index = 0;
@@ -404,8 +426,11 @@ function createChatServer({
             waitingQueue.splice(index, 1);
             user1.isQueued = false;
             user2.isQueued = false;
+            queueChanged = true;
 
             if (user1.disconnected || user2.disconnected) continue;
+
+            recordMatchWait(user1, user2, now);
 
             const roomId = crypto.randomUUID();
             user1.join(roomId);
@@ -420,6 +445,9 @@ function createChatServer({
             user2.emit('matched', { partnerName: user1.username, partnerColor: user1.color, partnerId: user1.clientId, partnerLanguage: user1.language, sharedInterests });
             log(`Matched ${user1.username} and ${user2.username} in room ${roomId}. Shared: ${sharedInterests.join(',')}`);
         }
+
+        if (queueChanged) broadcastQueueStatus();
+        return queueChanged;
     }
 
     function handleLeaveRoom(socket) {
@@ -589,6 +617,7 @@ function createChatServer({
         socket.on('disconnect', () => {
             removeFromQueue(socket);
             handleLeaveRoom(socket);
+            broadcastQueueStatus();
             log(`User disconnected: ${socket.username || socket.id}`);
         });
     });
