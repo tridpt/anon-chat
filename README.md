@@ -8,6 +8,7 @@ Anonymous, one-on-one chat with interest-based matching. GhostChat does not crea
 - Offer localized icebreaker prompts after a match, based on shared interests when possible.
 - Show the live number of people waiting and a wait-time estimate based on recent matches.
 - Select popular interest chips or type custom interests before matching.
+- Require self-attested 18+ and Community Rules acceptance before joining the queue.
 - Skip a chat, block a current partner, and manage or undo blocks in the browser.
 - Report a current partner with a reason, then review and resolve reports in `/admin`.
 - Server-side validation, message-size limits, queue limits, and per-socket flood controls.
@@ -55,6 +56,8 @@ Open `http://localhost:3000/admin` and enter the same token. The token is retain
 ## Safety behaviour and limitations
 
 Blocks use an anonymous random ID stored only in the visitor's browser. The blocked ID is sent to the server only to avoid matching that browser with the same person again. Clearing browser data creates a new ID, so this is a user-safety feature, not an account-level ban system.
+
+The 18+ confirmation is a self-attestation, not identity or age verification. It is intended to set a clear entry rule and cannot prevent a determined visitor from bypassing it.
 
 Reports are validated, stored in `DATA_DIR/reports.json`, and also written as structured `REPORT {...}` server logs. The `/admin` dashboard can filter reports and mark them reviewed or resolved. Establish a moderation process and protect the `ADMIN_TOKEN`; the app deliberately does not store chat messages.
 

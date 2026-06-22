@@ -53,6 +53,10 @@ async function connectClient(t, url) {
     return socket;
 }
 
+function login(socket, data) {
+    socket.emit('login', { ...data, safetyAcknowledged: true });
+}
+
 test('matches shared interests and relays messages', async t => {
     const url = await createTestServer(t);
     const alice = await connectClient(t, url);
@@ -60,8 +64,8 @@ test('matches shared interests and relays messages', async t => {
 
     const aliceMatched = waitForEvent(alice, 'matched');
     const bobMatched = waitForEvent(bob, 'matched');
-    alice.emit('login', { username: 'Alice', interests: 'anime, code' });
-    bob.emit('login', { username: 'Bob', interests: 'code, music' });
+    login(alice, { username: 'Alice', interests: 'anime, code' });
+    login(bob, { username: 'Bob', interests: 'code, music' });
 
     const aliceMatch = await aliceMatched;
     const bobMatch = await bobMatched;
@@ -95,8 +99,15 @@ test('rejects malformed login data without dropping the server connection', asyn
     });
     assert.equal(client.connected, true);
 
+    const missingSafetyAcknowledgement = waitForEvent(client, 'app_error');
+    client.emit('login', { username: 'Unsafe user', interests: 'music' });
+    assert.deepEqual(await missingSafetyAcknowledgement, {
+        code: 'invalid_login',
+        message: 'Confirm that you are 18+ and agree to the Community Rules.'
+    });
+
     const queued = waitForEvent(client, 'queued');
-    client.emit('login', { username: 'Safe user', interests: 'music' });
+    login(client, { username: 'Safe user', interests: 'music' });
     await queued;
     assert.equal(client.connected, true);
 });
@@ -106,7 +117,7 @@ test('validates language preferences and shares them with a match', async t => {
     const invalidClient = await connectClient(t, url);
 
     const invalidLanguage = waitForEvent(invalidClient, 'app_error');
-    invalidClient.emit('login', { username: 'Invalid', interests: 'music', language: 'fr' });
+    login(invalidClient, { username: 'Invalid', interests: 'music', language: 'fr' });
     assert.deepEqual(await invalidLanguage, {
         code: 'invalid_login',
         message: 'Choose a valid language preference.'
@@ -116,8 +127,8 @@ test('validates language preferences and shares them with a match', async t => {
     const bob = await connectClient(t, url);
     const aliceMatched = waitForEvent(alice, 'matched');
     const bobMatched = waitForEvent(bob, 'matched');
-    alice.emit('login', { username: 'Alice', interests: 'music', language: 'vi', clientId: 'client-alice-12345' });
-    bob.emit('login', { username: 'Bob', interests: 'music', language: 'vi', clientId: 'client-bob-123456' });
+    login(alice, { username: 'Alice', interests: 'music', language: 'vi', clientId: 'client-alice-12345' });
+    login(bob, { username: 'Bob', interests: 'music', language: 'vi', clientId: 'client-bob-123456' });
 
     assert.equal((await aliceMatched).partnerLanguage, 'vi');
     assert.equal((await bobMatched).partnerLanguage, 'vi');
@@ -128,7 +139,7 @@ test('publishes queue status to people waiting for a match', async t => {
     const client = await connectClient(t, url);
 
     const queueStatus = waitForEvent(client, 'queue_status');
-    client.emit('login', { username: 'Waiting', interests: 'music' });
+    login(client, { username: 'Waiting', interests: 'music' });
     assert.deepEqual(await queueStatus, {
         waitingCount: 1,
         estimatedWaitSeconds: null
@@ -142,8 +153,8 @@ test('rejects oversized messages instead of broadcasting them', async t => {
 
     const aliceMatched = waitForEvent(alice, 'matched');
     const bobMatched = waitForEvent(bob, 'matched');
-    alice.emit('login', { username: 'Alice', interests: 'games' });
-    bob.emit('login', { username: 'Bob', interests: 'games' });
+    login(alice, { username: 'Alice', interests: 'games' });
+    login(bob, { username: 'Bob', interests: 'games' });
     await Promise.all([aliceMatched, bobMatched]);
 
     const invalidMessage = waitForEvent(alice, 'app_error');
@@ -161,8 +172,8 @@ test('rate limits rapid message bursts', async t => {
 
     const aliceMatched = waitForEvent(alice, 'matched');
     const bobMatched = waitForEvent(bob, 'matched');
-    alice.emit('login', { username: 'Alice', interests: 'books' });
-    bob.emit('login', { username: 'Bob', interests: 'books' });
+    login(alice, { username: 'Alice', interests: 'books' });
+    login(bob, { username: 'Bob', interests: 'books' });
     await Promise.all([aliceMatched, bobMatched]);
 
     const rateLimited = waitForEvent(alice, 'app_error');
@@ -187,8 +198,8 @@ test('does not rematch a client with a blocked partner', async t => {
 
     const aliceMatched = waitForEvent(alice, 'matched');
     const bobMatched = waitForEvent(bob, 'matched');
-    alice.emit('login', { username: 'Alice', interests: 'games', clientId: aliceId });
-    bob.emit('login', { username: 'Bob', interests: 'games', clientId: bobId });
+    login(alice, { username: 'Alice', interests: 'games', clientId: aliceId });
+    login(bob, { username: 'Bob', interests: 'games', clientId: bobId });
     await Promise.all([aliceMatched, bobMatched]);
 
     const aliceBlocked = waitForEvent(alice, 'partner_blocked');
@@ -200,7 +211,7 @@ test('does not rematch a client with a blocked partner', async t => {
     bob.emit('skip');
     const aliceRematched = waitForEvent(alice, 'matched');
     const caraMatched = waitForEvent(cara, 'matched');
-    cara.emit('login', { username: 'Cara', interests: 'games', clientId: caraId });
+    login(cara, { username: 'Cara', interests: 'games', clientId: caraId });
 
     assert.equal((await aliceRematched).partnerName, 'Cara');
     assert.equal((await caraMatched).partnerName, 'Alice');
@@ -220,8 +231,8 @@ test('accepts a report and writes a structured moderation log entry', async t =>
 
     const aliceMatched = waitForEvent(alice, 'matched');
     const bobMatched = waitForEvent(bob, 'matched');
-    alice.emit('login', { username: 'Alice', interests: 'books', clientId: 'client-alice-12345' });
-    bob.emit('login', { username: 'Bob', interests: 'books', clientId: 'client-bob-123456' });
+    login(alice, { username: 'Alice', interests: 'books', clientId: 'client-alice-12345' });
+    login(bob, { username: 'Bob', interests: 'books', clientId: 'client-bob-123456' });
     await Promise.all([aliceMatched, bobMatched]);
 
     const reportReceived = waitForEvent(alice, 'report_received');
@@ -248,8 +259,8 @@ test('persists reports and requires an admin token to review them', async t => {
 
     const aliceMatched = waitForEvent(alice, 'matched');
     const bobMatched = waitForEvent(bob, 'matched');
-    alice.emit('login', { username: 'Alice', interests: 'books', clientId: 'client-alice-12345' });
-    bob.emit('login', { username: 'Bob', interests: 'books', clientId: 'client-bob-123456' });
+    login(alice, { username: 'Alice', interests: 'books', clientId: 'client-alice-12345' });
+    login(bob, { username: 'Bob', interests: 'books', clientId: 'client-bob-123456' });
     await Promise.all([aliceMatched, bobMatched]);
 
     const reportReceived = waitForEvent(alice, 'report_received');

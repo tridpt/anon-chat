@@ -50,6 +50,8 @@ const usernameInput = document.getElementById('username-input');
 const languageInput = document.getElementById('language-input');
 const interestsInput = document.getElementById('interests-input');
 const interestOptionButtons = [...document.querySelectorAll('.interest-option')];
+const ageConfirmation = document.getElementById('age-confirmation');
+const rulesConfirmation = document.getElementById('rules-confirmation');
 const chatForm = document.getElementById('chat-form');
 const msgInput = document.getElementById('msg-input');
 const chatBox = document.getElementById('chat-box');
@@ -79,6 +81,7 @@ const blockedClose = document.getElementById('blocked-close');
 const CLIENT_ID_KEY = 'ghostchat-client-id';
 const BLOCKED_PARTNERS_KEY = 'ghostchat-blocked-partners';
 const LEGACY_BLOCKED_CLIENT_IDS_KEY = 'ghostchat-blocked-client-ids';
+const SAFETY_ACKNOWLEDGEMENT_KEY = 'ghostchat-safety-acknowledged-v1';
 const CLIENT_ID_PATTERN = /^[A-Za-z0-9_-]{16,64}$/;
 const MAX_BLOCKED_CLIENT_IDS = 100;
 
@@ -90,6 +93,7 @@ let hasActiveSession = false;
 let isInChat = false;
 let currentPartnerId = null;
 let currentPartnerName = '';
+let safetyAcknowledged = false;
 const clientId = getOrCreateClientId();
 const blockedPartners = getBlockedPartners();
 const blockedClientIds = new Set(blockedPartners.map(partner => partner.id));
@@ -174,6 +178,22 @@ function saveBlockedPartners() {
 
 function getBlockedPartnerName(value) {
     return typeof value === 'string' && value.trim() ? value.trim().slice(0, 20) : 'Blocked user';
+}
+
+function hasSafetyAcknowledgement() {
+    return ageConfirmation.checked && rulesConfirmation.checked;
+}
+
+function saveSafetyAcknowledgement() {
+    try {
+        if (hasSafetyAcknowledgement()) {
+            window.localStorage.setItem(SAFETY_ACKNOWLEDGEMENT_KEY, 'true');
+        } else {
+            window.localStorage.removeItem(SAFETY_ACKNOWLEDGEMENT_KEY);
+        }
+    } catch {
+        // The acknowledgement still applies for this session when local storage is unavailable.
+    }
 }
 
 function rememberBlockedPartner(partnerId, partnerName) {
@@ -349,12 +369,13 @@ function clearLoginError() {
 }
 
 function joinQueue() {
-    if (!hasActiveSession || !socket.connected) return;
+    if (!hasActiveSession || !socket.connected || !safetyAcknowledged) return;
 
     socket.emit('login', {
         username: myUsername,
         interests: myInterests,
         language: myLanguage,
+        safetyAcknowledged,
         clientId,
         blockedClientIds: [...blockedClientIds]
     });
@@ -428,12 +449,18 @@ loginForm.addEventListener('submit', (e) => {
     e.preventDefault();
     myUsername = usernameInput.value.trim();
     if (!myUsername) return;
+    if (!hasSafetyAcknowledgement()) {
+        showLoginError('Confirm that you are 18+ and agree to the Community Rules first.');
+        return;
+    }
 
     // Initialize audio context on user interaction
     initAudio();
 
     myInterests = interestsInput.value.trim();
     myLanguage = languageInput.value;
+    safetyAcknowledged = true;
+    saveSafetyAcknowledgement();
     hasActiveSession = true;
     isInChat = false;
     clearLoginError();
@@ -446,6 +473,19 @@ loginForm.addEventListener('submit', (e) => {
     } else {
         socket.connect();
     }
+});
+
+try {
+    if (window.localStorage.getItem(SAFETY_ACKNOWLEDGEMENT_KEY) === 'true') {
+        ageConfirmation.checked = true;
+        rulesConfirmation.checked = true;
+    }
+} catch {
+    // The form remains usable when local storage is unavailable.
+}
+
+[ageConfirmation, rulesConfirmation].forEach(checkbox => {
+    checkbox.addEventListener('change', saveSafetyAcknowledgement);
 });
 
 // 2. Matchmaking Logic

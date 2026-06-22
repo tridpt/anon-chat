@@ -46,6 +46,7 @@ function parseLogin(data) {
     const rawUsername = data.username ?? '';
     const rawInterests = data.interests ?? '';
     const rawLanguage = data.language ?? 'any';
+    const safetyAcknowledged = data.safetyAcknowledged;
     const rawClientId = data.clientId ?? crypto.randomUUID();
     const rawBlockedClientIds = data.blockedClientIds ?? [];
 
@@ -55,6 +56,10 @@ function parseLogin(data) {
 
     if (!LANGUAGES.has(rawLanguage)) {
         return { error: 'Choose a valid language preference.' };
+    }
+
+    if (safetyAcknowledged !== true) {
+        return { error: 'Confirm that you are 18+ and agree to the Community Rules.' };
     }
 
     if (!isClientId(rawClientId)) {

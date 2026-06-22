@@ -245,6 +245,53 @@ body {
     background: rgba(139, 92, 246, 0.32);
 }
 
+.safety-notice {
+    padding: 14px;
+    color: var(--text-secondary);
+    border: 1px solid rgba(251, 191, 36, 0.24);
+    border-radius: 12px;
+    background: rgba(251, 191, 36, 0.06);
+    text-align: left;
+}
+
+.safety-notice h2 {
+    margin: 0 0 6px;
+    color: #fef3c7;
+    font-size: 14px;
+}
+
+.safety-notice p {
+    margin: 0 0 10px;
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.safety-check {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-top: 8px;
+    color: var(--text-primary);
+    font-size: 12px;
+    line-height: 1.35;
+}
+
+#login-form .safety-check input {
+    width: auto;
+    margin-top: 2px;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    accent-color: var(--accent);
+}
+
+#login-form .safety-check input:focus {
+    border: 0;
+    box-shadow: none;
+}
+
 #login-form input:focus,
 #login-form select:focus {
     background: rgba(255, 255, 255, 0.1);
