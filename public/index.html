@@ -32,7 +32,22 @@
                             <option value="vi">Tiếng Việt</option>
                             <option value="en">English</option>
                         </select>
-                        <input type="text" id="interests-input" placeholder="Interests (e.g., anime, code, music)" autocomplete="off" maxlength="200">
+                        <div class="interest-picker">
+                            <input type="text" id="interests-input" placeholder="Interests (e.g., anime, code, music)" autocomplete="off" maxlength="200">
+                            <p id="interest-hint" class="interest-hint">Pick a few or type your own.</p>
+                            <div class="interest-options" aria-labelledby="interest-hint">
+                                <button type="button" class="interest-option" data-interest="anime" aria-pressed="false">Anime</button>
+                                <button type="button" class="interest-option" data-interest="music" aria-pressed="false">Music</button>
+                                <button type="button" class="interest-option" data-interest="gaming" aria-pressed="false">Gaming</button>
+                                <button type="button" class="interest-option" data-interest="movies" aria-pressed="false">Movies</button>
+                                <button type="button" class="interest-option" data-interest="coding" aria-pressed="false">Coding</button>
+                                <button type="button" class="interest-option" data-interest="travel" aria-pressed="false">Travel</button>
+                                <button type="button" class="interest-option" data-interest="books" aria-pressed="false">Books</button>
+                                <button type="button" class="interest-option" data-interest="fitness" aria-pressed="false">Fitness</button>
+                                <button type="button" class="interest-option" data-interest="food" aria-pressed="false">Food</button>
+                                <button type="button" class="interest-option" data-interest="art" aria-pressed="false">Art</button>
+                            </div>
+                        </div>
                         <button type="submit" class="btn-primary">Start Chatting</button>
                     </form>
                     <p id="login-error" class="form-error" role="status" aria-live="polite" hidden></p>

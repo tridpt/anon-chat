@@ -49,6 +49,7 @@ const loginForm = document.getElementById('login-form');
 const usernameInput = document.getElementById('username-input');
 const languageInput = document.getElementById('language-input');
 const interestsInput = document.getElementById('interests-input');
+const interestOptionButtons = [...document.querySelectorAll('.interest-option')];
 const chatForm = document.getElementById('chat-form');
 const msgInput = document.getElementById('msg-input');
 const chatBox = document.getElementById('chat-box');
@@ -191,6 +192,45 @@ function rememberBlockedPartner(partnerId, partnerName) {
     blockedClientIds.add(partnerId);
     saveBlockedPartners();
 }
+
+function getInterestTokens() {
+    const tokens = [];
+    interestsInput.value.split(',').forEach(rawInterest => {
+        const interest = rawInterest.trim().replace(/\s+/g, ' ').toLowerCase();
+        if (interest && !tokens.includes(interest)) tokens.push(interest);
+    });
+    return tokens;
+}
+
+function syncInterestOptions() {
+    const selectedInterests = new Set(getInterestTokens());
+    interestOptionButtons.forEach(button => {
+        const selected = selectedInterests.has(button.dataset.interest);
+        button.setAttribute('aria-pressed', String(selected));
+    });
+}
+
+function setInterestTokens(tokens) {
+    interestsInput.value = tokens.join(', ');
+    syncInterestOptions();
+}
+
+interestOptionButtons.forEach(button => {
+    button.addEventListener('click', () => {
+        const interest = button.dataset.interest;
+        const tokens = getInterestTokens();
+        const existingIndex = tokens.indexOf(interest);
+        if (existingIndex === -1) {
+            tokens.push(interest);
+        } else {
+            tokens.splice(existingIndex, 1);
+        }
+        setInterestTokens(tokens);
+        interestsInput.focus();
+    });
+});
+
+interestsInput.addEventListener('input', syncInterestOptions);
 
 function renderBlockedPartners() {
     blockedList.innerHTML = '';

@@ -205,6 +205,46 @@ body {
     appearance: auto;
 }
 
+.interest-picker {
+    text-align: left;
+}
+
+.interest-hint {
+    margin: 10px 2px 8px;
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.interest-options {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 7px;
+}
+
+.interest-option {
+    padding: 6px 10px;
+    color: var(--text-secondary);
+    border: 1px solid var(--glass-border);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.04);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.18s ease;
+}
+
+.interest-option:hover {
+    color: var(--text-primary);
+    border-color: rgba(196, 181, 253, 0.45);
+}
+
+.interest-option[aria-pressed="true"] {
+    color: #ede9fe;
+    border-color: rgba(196, 181, 253, 0.65);
+    background: rgba(139, 92, 246, 0.32);
+}
+
 #login-form input:focus,
 #login-form select:focus {
     background: rgba(255, 255, 255, 0.1);
