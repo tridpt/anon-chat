@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex, nofollow">
+    <title>GhostChat Moderation</title>
+    <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+    <main class="admin-shell">
+        <header class="admin-header">
+            <div>
+                <p class="eyebrow">GhostChat</p>
+                <h1>Moderation inbox</h1>
+            </div>
+            <a href="/" class="back-link">Back to chat</a>
+        </header>
+
+        <section class="panel token-panel" aria-labelledby="token-title">
+            <div>
+                <h2 id="token-title">Admin access</h2>
+                <p>The token stays in this browser session only.</p>
+            </div>
+            <form id="token-form" class="token-form">
+                <label class="sr-only" for="admin-token">Admin token</label>
+                <input id="admin-token" type="password" autocomplete="off" placeholder="ADMIN_TOKEN" required>
+                <button type="submit">Unlock</button>
+                <button id="clear-token" type="button" class="secondary">Clear</button>
+            </form>
+        </section>
+
+        <section class="toolbar" aria-label="Report controls">
+            <label for="status-filter">Show</label>
+            <select id="status-filter">
+                <option value="">All reports</option>
+                <option value="new">New</option>
+                <option value="reviewed">Reviewed</option>
+                <option value="resolved">Resolved</option>
+            </select>
+            <button id="refresh-reports" type="button" class="secondary">Refresh</button>
+            <p id="admin-status" role="status" aria-live="polite"></p>
+        </section>
+
+        <section id="reports" class="report-list" aria-live="polite"></section>
+    </main>
+
+    <script src="admin.js"></script>
+</body>
+</html>

@@ -31,6 +31,7 @@
                         <button type="submit" class="btn-primary">Start Chatting</button>
                     </form>
                     <p id="login-error" class="form-error" role="status" aria-live="polite" hidden></p>
+                    <button id="manage-blocks-btn" type="button" class="text-btn">Manage blocked people</button>
                 </div>
             </div>
 
@@ -117,6 +118,17 @@
                         <button type="submit" class="btn-danger">Send report</button>
                     </div>
                 </form>
+            </dialog>
+
+            <dialog id="blocked-dialog" class="report-dialog blocked-dialog" aria-labelledby="blocked-title">
+                <section class="report-form">
+                    <h2 id="blocked-title">Blocked people</h2>
+                    <p>Blocked people will not be matched with this browser again.</p>
+                    <div id="blocked-list" class="blocked-list"></div>
+                    <div class="dialog-actions">
+                        <button id="blocked-close" type="button" class="btn-secondary">Done</button>
+                    </div>
+                </section>
             </dialog>
 
         </main>

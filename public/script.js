@@ -65,9 +65,14 @@ const reportReason = document.getElementById('report-reason');
 const reportNote = document.getElementById('report-note');
 const reportAndBlock = document.getElementById('report-and-block');
 const reportCancel = document.getElementById('report-cancel');
+const manageBlocksBtn = document.getElementById('manage-blocks-btn');
+const blockedDialog = document.getElementById('blocked-dialog');
+const blockedList = document.getElementById('blocked-list');
+const blockedClose = document.getElementById('blocked-close');
 
 const CLIENT_ID_KEY = 'ghostchat-client-id';
-const BLOCKED_CLIENT_IDS_KEY = 'ghostchat-blocked-client-ids';
+const BLOCKED_PARTNERS_KEY = 'ghostchat-blocked-partners';
+const LEGACY_BLOCKED_CLIENT_IDS_KEY = 'ghostchat-blocked-client-ids';
 const CLIENT_ID_PATTERN = /^[A-Za-z0-9_-]{16,64}$/;
 const MAX_BLOCKED_CLIENT_IDS = 100;
 
@@ -77,8 +82,10 @@ let typingTimeout = null;
 let hasActiveSession = false;
 let isInChat = false;
 let currentPartnerId = null;
+let currentPartnerName = '';
 const clientId = getOrCreateClientId();
-const blockedClientIds = new Set(getBlockedClientIds());
+const blockedPartners = getBlockedPartners();
+const blockedClientIds = new Set(blockedPartners.map(partner => partner.id));
 
 function createClientId() {
     if (window.crypto?.randomUUID) return window.crypto.randomUUID();
@@ -99,33 +106,91 @@ function getOrCreateClientId() {
     }
 }
 
-function getBlockedClientIds() {
+function getBlockedPartners() {
     try {
-        const savedIds = JSON.parse(window.localStorage.getItem(BLOCKED_CLIENT_IDS_KEY) || '[]');
-        return Array.isArray(savedIds)
-            ? savedIds.filter(id => CLIENT_ID_PATTERN.test(id)).slice(-MAX_BLOCKED_CLIENT_IDS)
-            : [];
+        const savedPartners = JSON.parse(
+            window.localStorage.getItem(BLOCKED_PARTNERS_KEY)
+            || window.localStorage.getItem(LEGACY_BLOCKED_CLIENT_IDS_KEY)
+            || '[]'
+        );
+        if (!Array.isArray(savedPartners)) return [];
+
+        const uniquePartners = new Map();
+        savedPartners.forEach(partner => {
+            const id = typeof partner === 'string' ? partner : partner?.id;
+            const name = partner && typeof partner === 'object' && typeof partner.name === 'string' ? partner.name : 'Blocked user';
+            if (CLIENT_ID_PATTERN.test(id || '')) {
+                uniquePartners.set(id, { id, name: name.slice(0, 20) || 'Blocked user' });
+            }
+        });
+        return [...uniquePartners.values()].slice(-MAX_BLOCKED_CLIENT_IDS);
     } catch {
         return [];
     }
 }
 
-function saveBlockedClientIds() {
+function saveBlockedPartners() {
     try {
-        window.localStorage.setItem(BLOCKED_CLIENT_IDS_KEY, JSON.stringify([...blockedClientIds]));
+        window.localStorage.setItem(BLOCKED_PARTNERS_KEY, JSON.stringify(blockedPartners));
+        window.localStorage.removeItem(LEGACY_BLOCKED_CLIENT_IDS_KEY);
     } catch {
         // Blocking still works for the active session when local storage is unavailable.
     }
 }
 
-function rememberBlockedPartner(partnerId) {
+function getBlockedPartnerName(value) {
+    return typeof value === 'string' && value.trim() ? value.trim().slice(0, 20) : 'Blocked user';
+}
+
+function rememberBlockedPartner(partnerId, partnerName) {
     if (!CLIENT_ID_PATTERN.test(partnerId || '')) return;
 
-    if (!blockedClientIds.has(partnerId) && blockedClientIds.size >= MAX_BLOCKED_CLIENT_IDS) {
-        blockedClientIds.delete(blockedClientIds.values().next().value);
+    const existingPartner = blockedPartners.find(partner => partner.id === partnerId);
+    if (existingPartner) {
+        existingPartner.name = getBlockedPartnerName(partnerName);
+    } else {
+        if (blockedPartners.length >= MAX_BLOCKED_CLIENT_IDS) {
+            const removedPartner = blockedPartners.shift();
+            blockedClientIds.delete(removedPartner.id);
+        }
+        blockedPartners.push({ id: partnerId, name: getBlockedPartnerName(partnerName) });
     }
     blockedClientIds.add(partnerId);
-    saveBlockedClientIds();
+    saveBlockedPartners();
+}
+
+function renderBlockedPartners() {
+    blockedList.innerHTML = '';
+    if (!blockedPartners.length) {
+        const empty = document.createElement('p');
+        empty.className = 'blocked-empty';
+        empty.innerText = 'You have not blocked anyone.';
+        blockedList.appendChild(empty);
+        return;
+    }
+
+    [...blockedPartners].reverse().forEach(partner => {
+        const item = document.createElement('div');
+        item.className = 'blocked-item';
+        const name = document.createElement('span');
+        name.className = 'blocked-item-name';
+        name.innerText = partner.name;
+        const unblock = document.createElement('button');
+        unblock.type = 'button';
+        unblock.className = 'btn-secondary';
+        unblock.innerText = 'Unblock';
+        unblock.addEventListener('click', () => {
+            const index = blockedPartners.findIndex(blockedPartner => blockedPartner.id === partner.id);
+            if (index === -1) return;
+
+            blockedPartners.splice(index, 1);
+            blockedClientIds.delete(partner.id);
+            saveBlockedPartners();
+            renderBlockedPartners();
+        });
+        item.append(name, unblock);
+        blockedList.appendChild(item);
+    });
 }
 
 function showScreen(screenId) {
@@ -175,6 +240,7 @@ socket.on('disconnect', () => {
 
     isInChat = false;
     currentPartnerId = null;
+    currentPartnerName = '';
     reportBtn.disabled = true;
     blockBtn.disabled = true;
     setWaitingStatus('Reconnecting...', 'Your connection was interrupted. We will try again automatically.');
@@ -242,6 +308,7 @@ socket.on('matched', (partnerInfo) => {
     typingIndicator.style.display = 'none'; // hide typing
     isInChat = true;
     currentPartnerId = partnerInfo.partnerId || null;
+    currentPartnerName = getBlockedPartnerName(partnerInfo.partnerName);
     reportBtn.disabled = false;
     blockBtn.disabled = false;
 
@@ -263,6 +330,7 @@ socket.on('partner_left', () => {
     typingIndicator.style.display = 'none';
     isInChat = false;
     currentPartnerId = null;
+    currentPartnerName = '';
     reportBtn.disabled = true;
     blockBtn.disabled = true;
     
@@ -281,6 +349,7 @@ skipBtn.addEventListener('click', () => {
 
     isInChat = false;
     currentPartnerId = null;
+    currentPartnerName = '';
     reportBtn.disabled = true;
     blockBtn.disabled = true;
     typingIndicator.style.display = 'none';
@@ -292,7 +361,7 @@ skipBtn.addEventListener('click', () => {
 function blockCurrentPartner() {
     if (!isInChat || !currentPartnerId || !socket.connected || blockBtn.disabled) return;
 
-    rememberBlockedPartner(currentPartnerId);
+    rememberBlockedPartner(currentPartnerId, currentPartnerName);
     blockBtn.disabled = true;
     reportBtn.disabled = true;
     socket.emit('blockPartner');
@@ -315,6 +384,13 @@ reportBtn.addEventListener('click', () => {
 
 reportCancel.addEventListener('click', () => reportDialog.close());
 
+manageBlocksBtn.addEventListener('click', () => {
+    renderBlockedPartners();
+    blockedDialog.showModal();
+});
+
+blockedClose.addEventListener('click', () => blockedDialog.close());
+
 reportForm.addEventListener('submit', event => {
     event.preventDefault();
     if (!isInChat || !currentPartnerId || !socket.connected) return;
@@ -330,6 +406,7 @@ reportForm.addEventListener('submit', event => {
 socket.on('partner_blocked', () => {
     isInChat = false;
     currentPartnerId = null;
+    currentPartnerName = '';
     typingIndicator.style.display = 'none';
     setWaitingStatus('Looking for a partner...', 'The person was blocked. Finding someone new for you.');
     showScreen('waiting-screen');

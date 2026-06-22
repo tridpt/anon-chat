@@ -1,5 +1,8 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
+const fs = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
 const { io } = require('socket.io-client');
 const { createChatServer, LIMITS } = require('../index');
 
@@ -19,14 +22,18 @@ function waitForEvent(socket, event, timeoutMs = 1_500) {
     });
 }
 
-async function createTestServer(t, logger = { info() {}, error() {} }) {
-    const chat = createChatServer({ logger });
+async function createTestServer(t, { logger = { info() {}, error() {} }, adminToken } = {}) {
+    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'anon-chat-test-'));
+    const chat = createChatServer({ logger, dataDir, adminToken });
     await new Promise((resolve, reject) => {
         chat.server.once('error', reject);
         chat.server.listen(0, '127.0.0.1', resolve);
     });
 
-    t.after(() => chat.close());
+    t.after(async () => {
+        await chat.close();
+        await fs.rm(dataDir, { recursive: true, force: true });
+    });
     const { port } = chat.server.address();
     return `http://127.0.0.1:${port}`;
 }
@@ -168,9 +175,11 @@ test('does not rematch a client with a blocked partner', async t => {
 test('accepts a report and writes a structured moderation log entry', async t => {
     const reports = [];
     const url = await createTestServer(t, {
-        info() {},
-        error() {},
-        warn(message) { reports.push(message); }
+        logger: {
+            info() {},
+            error() {},
+            warn(message) { reports.push(message); }
+        }
     });
     const alice = await connectClient(t, url);
     const bob = await connectClient(t, url);
@@ -191,4 +200,48 @@ test('accepts a report and writes a structured moderation log entry', async t =>
     assert.equal(report.reportedUser.alias, 'Bob');
     assert.equal(report.reason, 'Harassment or bullying: Repeated insults');
     assert.match(report.createdAt, /^\d{4}-\d{2}-\d{2}T/);
+});
+
+test('persists reports and requires an admin token to review them', async t => {
+    const adminToken = 'test-admin-token-123';
+    const url = await createTestServer(t, { adminToken });
+    const adminPage = await fetch(`${url}/admin`);
+    assert.equal(adminPage.status, 200);
+    assert.match(await adminPage.text(), /Moderation inbox/);
+
+    const alice = await connectClient(t, url);
+    const bob = await connectClient(t, url);
+
+    const aliceMatched = waitForEvent(alice, 'matched');
+    const bobMatched = waitForEvent(bob, 'matched');
+    alice.emit('login', { username: 'Alice', interests: 'books', clientId: 'client-alice-12345' });
+    bob.emit('login', { username: 'Bob', interests: 'books', clientId: 'client-bob-123456' });
+    await Promise.all([aliceMatched, bobMatched]);
+
+    const reportReceived = waitForEvent(alice, 'report_received');
+    alice.emit('reportPartner', { reason: 'Spam or scam' });
+    await reportReceived;
+
+    const unauthenticated = await fetch(`${url}/api/admin/reports`);
+    assert.equal(unauthenticated.status, 401);
+
+    const headers = { Authorization: `Bearer ${adminToken}` };
+    const listed = await fetch(`${url}/api/admin/reports`, { headers });
+    assert.equal(listed.status, 200);
+    assert.equal(listed.headers.get('cache-control'), 'no-store');
+    const { reports } = await listed.json();
+    assert.equal(reports.length, 1);
+    assert.equal(reports[0].status, 'new');
+    assert.equal(reports[0].reason, 'Spam or scam');
+
+    const reviewed = await fetch(`${url}/api/admin/reports/${reports[0].id}`, {
+        method: 'PATCH',
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'resolved', moderationNote: 'Blocked repeat spammer.' })
+    });
+    assert.equal(reviewed.status, 200);
+    const { report } = await reviewed.json();
+    assert.equal(report.status, 'resolved');
+    assert.equal(report.moderationNote, 'Blocked repeat spammer.');
+    assert.match(report.reviewedAt, /^\d{4}-\d{2}-\d{2}T/);
 });

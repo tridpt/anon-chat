@@ -3,6 +3,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
 const crypto = require('crypto');
+const fs = require('fs/promises');
 
 const COLORS = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FDCB6E', '#6C5CE7', '#55E6C1', '#D6A2E8', '#FF9FF3'];
 const LIMITS = {
@@ -22,6 +23,7 @@ const LIMITS = {
     blockRate: { max: 5, windowMs: 60_000 },
     reportRate: { max: 3, windowMs: 60 * 60_000 }
 };
+const REPORT_STATUSES = new Set(['new', 'reviewed', 'resolved']);
 
 function isPlainObject(value) {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -115,12 +117,77 @@ function parseReport(data) {
     return { value: reason };
 }
 
-function createChatServer({ logger = console } = {}) {
+function copyValue(value) {
+    return JSON.parse(JSON.stringify(value));
+}
+
+function createReportStore(dataDirectory) {
+    const reportsFile = path.join(dataDirectory, 'reports.json');
+    let reports = [];
+    let initialized = false;
+    let operationQueue = Promise.resolve();
+
+    function enqueue(operation) {
+        const task = operationQueue.then(operation, operation);
+        operationQueue = task.catch(() => undefined);
+        return task;
+    }
+
+    async function initialize() {
+        if (initialized) return;
+
+        await fs.mkdir(dataDirectory, { recursive: true });
+        try {
+            const contents = await fs.readFile(reportsFile, 'utf8');
+            const parsed = JSON.parse(contents);
+            if (!Array.isArray(parsed)) throw new Error('Report store must contain an array.');
+            reports = parsed;
+        } catch (error) {
+            if (error.code !== 'ENOENT') throw error;
+            reports = [];
+        }
+        initialized = true;
+    }
+
+    async function persist() {
+        const temporaryFile = `${reportsFile}.${process.pid}.${Date.now()}.tmp`;
+        await fs.writeFile(temporaryFile, `${JSON.stringify(reports, null, 2)}\n`, 'utf8');
+        await fs.rename(temporaryFile, reportsFile);
+    }
+
+    return {
+        append: report => enqueue(async () => {
+            await initialize();
+            reports.unshift(report);
+            await persist();
+            return copyValue(report);
+        }),
+        list: status => enqueue(async () => {
+            await initialize();
+            const matchingReports = status ? reports.filter(report => report.status === status) : reports;
+            return copyValue(matchingReports);
+        }),
+        update: (id, changes) => enqueue(async () => {
+            await initialize();
+            const report = reports.find(item => item.id === id);
+            if (!report) return null;
+
+            Object.assign(report, changes);
+            await persist();
+            return copyValue(report);
+        })
+    };
+}
+
+function createChatServer({
+    logger = console,
+    dataDir = process.env.DATA_DIR || path.join(__dirname, 'data'),
+    adminToken = process.env.ADMIN_TOKEN
+} = {}) {
     const app = express();
     const server = http.createServer(app);
     const io = new Server(server, { maxHttpBufferSize: LIMITS.maxPayloadBytes });
-
-    app.use(express.static(path.join(__dirname, 'public')));
+    const reportStore = createReportStore(dataDir);
 
     let waitingQueue = [];
 
@@ -152,6 +219,79 @@ function createChatServer({ logger = console } = {}) {
             socket.emit('app_error', { code, message });
         }
     }
+
+    function hasAdminAccess(request) {
+        if (!adminToken) return false;
+
+        const authorization = request.get('authorization') || '';
+        const suppliedToken = authorization.startsWith('Bearer ') ? authorization.slice(7) : '';
+        const expected = Buffer.from(adminToken);
+        const supplied = Buffer.from(suppliedToken);
+        return expected.length === supplied.length && crypto.timingSafeEqual(expected, supplied);
+    }
+
+    function requireAdmin(request, response, next) {
+        if (!adminToken) {
+            response.status(503).json({ error: 'Admin access is disabled. Configure ADMIN_TOKEN first.' });
+            return;
+        }
+
+        if (!hasAdminAccess(request)) {
+            response.status(401).json({ error: 'A valid admin token is required.' });
+            return;
+        }
+
+        response.set('Cache-Control', 'no-store');
+        next();
+    }
+
+    app.use(express.json({ limit: '5kb' }));
+    app.get('/admin', (request, response) => {
+        response.sendFile(path.join(__dirname, 'public', 'admin.html'));
+    });
+    app.get('/api/admin/reports', requireAdmin, async (request, response) => {
+        try {
+            const status = request.query.status;
+            if (status && !REPORT_STATUSES.has(status)) {
+                response.status(400).json({ error: 'Invalid report status.' });
+                return;
+            }
+
+            response.json({ reports: await reportStore.list(status) });
+        } catch (error) {
+            logError(error);
+            response.status(500).json({ error: 'Could not load reports.' });
+        }
+    });
+    app.patch('/api/admin/reports/:id', requireAdmin, async (request, response) => {
+        try {
+            const { status, moderationNote = '' } = request.body ?? {};
+            if (!REPORT_STATUSES.has(status)) {
+                response.status(400).json({ error: 'Invalid report status.' });
+                return;
+            }
+            if (typeof moderationNote !== 'string' || moderationNote.length > LIMITS.maxReportReasonLength) {
+                response.status(400).json({ error: 'Moderation note is invalid.' });
+                return;
+            }
+
+            const report = await reportStore.update(request.params.id, {
+                status,
+                moderationNote: cleanText(moderationNote),
+                reviewedAt: new Date().toISOString()
+            });
+            if (!report) {
+                response.status(404).json({ error: 'Report not found.' });
+                return;
+            }
+
+            response.json({ report });
+        } catch (error) {
+            logError(error);
+            response.status(500).json({ error: 'Could not update the report.' });
+        }
+    });
+    app.use(express.static(path.join(__dirname, 'public')));
 
     function isRateLimited(socket, key, { max, windowMs }) {
         const now = Date.now();
@@ -277,7 +417,10 @@ function createChatServer({ logger = console } = {}) {
     function safelyHandle(socket, handler) {
         return (...args) => {
             try {
-                handler(...args);
+                Promise.resolve(handler(...args)).catch(error => {
+                    logError(error);
+                    sendError(socket, 'server_error', 'Something went wrong. Please try again.');
+                });
             } catch (error) {
                 logError(error);
                 sendError(socket, 'server_error', 'Something went wrong. Please try again.');
@@ -385,7 +528,7 @@ function createChatServer({ logger = console } = {}) {
             log(`${socket.username} blocked a chat partner.`);
         }));
 
-        socket.on('reportPartner', safelyHandle(socket, data => {
+        socket.on('reportPartner', safelyHandle(socket, async data => {
             if (!socket.currentRoom || !socket.partner) {
                 sendError(socket, 'invalid_state', 'You can only report someone while you are chatting.');
                 return;
@@ -403,13 +546,17 @@ function createChatServer({ logger = console } = {}) {
             }
 
             const partner = socket.partner;
-            logReport({
+            const report = await reportStore.append({
                 id: crypto.randomUUID(),
                 createdAt: new Date().toISOString(),
                 reporter: { alias: socket.username, clientId: socket.clientId },
                 reportedUser: { alias: partner.username, clientId: partner.clientId },
-                reason: parsed.value
+                reason: parsed.value,
+                status: 'new',
+                moderationNote: '',
+                reviewedAt: null
             });
+            logReport(report);
             socket.emit('report_received');
         }));
 
