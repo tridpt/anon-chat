@@ -136,46 +136,50 @@ body {
 
 /* --- LOGIN SCREEN --- */
 #login-screen {
-    justify-content: center;
+    position: relative;
     align-items: center;
+    overflow-y: auto;
+    padding: 20px 0;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+
+#login-screen::-webkit-scrollbar {
+    display: none;
 }
 
 .login-card {
+    margin-block: auto;
     text-align: center;
     width: 100%;
     max-width: 400px;
-    padding: 40px;
+    padding: 18px 36px;
 }
 
 .logo-large {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 16px;
-    margin-bottom: 16px;
+    gap: 6px;
+    margin-bottom: 6px;
 }
 
 .logo-large i {
-    font-size: 64px;
+    font-size: 38px;
     color: var(--accent);
-    filter: drop-shadow(0 0 16px rgba(139, 92, 246, 0.6));
-    animation: floatLogo 3s ease-in-out infinite alternate;
-}
-
-@keyframes floatLogo {
-    from { transform: translateY(0); }
-    to { transform: translateY(-10px); }
+    filter: drop-shadow(0 0 12px rgba(139, 92, 246, 0.6));
 }
 
 .logo-large h1 {
-    font-size: 32px;
+    font-size: 24px;
     font-weight: 700;
     letter-spacing: -1px;
 }
 
 .subtitle {
     color: var(--text-secondary);
-    margin-bottom: 30px;
+    font-size: 14px;
+    margin-bottom: 10px;
 }
 
 .form-error {
@@ -186,7 +190,7 @@ body {
 }
 
 .text-btn {
-    margin-top: 18px;
+    margin-top: 12px;
     padding: 0;
     color: var(--text-secondary);
     border: 0;
@@ -204,7 +208,7 @@ body {
 #login-form {
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 9px;
 }
 
 #login-form input,
@@ -212,9 +216,9 @@ body {
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid var(--glass-border);
     border-radius: 12px;
-    padding: 16px 20px;
+    padding: 12px 18px;
     color: var(--text-primary);
-    font-size: 16px;
+    font-size: 15px;
     outline: none;
     transition: all 0.2s ease;
     text-align: center;
@@ -225,12 +229,22 @@ body {
     appearance: auto;
 }
 
+#login-form select option,
+.report-form select option {
+    color: #f8fafc;
+    background: #172033;
+}
+
 .interest-picker {
     text-align: left;
 }
 
+.interest-picker input {
+    width: 100%;
+}
+
 .interest-hint {
-    margin: 10px 2px 8px;
+    margin: 6px 2px 6px;
     color: var(--text-secondary);
     font-size: 12px;
 }
@@ -266,7 +280,7 @@ body {
 }
 
 .safety-notice {
-    padding: 14px;
+    padding: 12px;
     color: var(--text-secondary);
     border: 1px solid rgba(251, 191, 36, 0.24);
     border-radius: 12px;
@@ -275,22 +289,22 @@ body {
 }
 
 .safety-notice h2 {
-    margin: 0 0 6px;
+    margin: 0 0 5px;
     color: #fef3c7;
     font-size: 14px;
 }
 
 .safety-notice p {
-    margin: 0 0 10px;
+    margin: 0 0 8px;
     font-size: 12px;
-    line-height: 1.45;
+    line-height: 1.4;
 }
 
 .safety-check {
     display: flex;
     align-items: flex-start;
     gap: 8px;
-    margin-top: 8px;
+    margin-top: 6px;
     color: var(--text-primary);
     font-size: 12px;
     line-height: 1.35;
@@ -324,7 +338,7 @@ body {
     color: white;
     border: none;
     border-radius: 12px;
-    padding: 16px;
+    padding: 13px;
     font-size: 16px;
     font-weight: 600;
     cursor: pointer;
@@ -690,6 +704,7 @@ body {
 /* Report dialog */
 .report-dialog {
     width: min(92vw, 460px);
+    margin: auto;
     color: var(--text-primary);
     background: #172033;
     border: 1px solid var(--glass-border);
@@ -1154,4 +1169,131 @@ body {
     .react-btn {
         opacity: 0.6;
     }
+}
+
+/* Corner button (manage blocked people on the login screen) */
+.corner-btn {
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    z-index: 15;
+    width: 42px;
+    height: 42px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-secondary);
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: 50%;
+    font-size: 15px;
+    cursor: pointer;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    transition: all 0.2s ease;
+}
+
+.corner-btn:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+    transform: translateY(-1px);
+}
+
+@media (max-width: 768px) {
+    .corner-btn {
+        top: 12px;
+        left: 12px;
+        width: 38px;
+        height: 38px;
+        font-size: 14px;
+    }
+}
+
+/* Custom language dropdown (replaces the native select for full styling control) */
+.custom-select {
+    position: relative;
+}
+
+.custom-select-trigger {
+    position: relative;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--surface-soft);
+    border: 1px solid var(--glass-border);
+    border-radius: 12px;
+    padding: 12px 18px;
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 15px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.custom-select-trigger:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.custom-select-trigger[aria-expanded="true"] {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.2);
+}
+
+.custom-select-trigger i {
+    position: absolute;
+    right: 16px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 12px;
+    color: var(--text-secondary);
+    pointer-events: none;
+    transition: transform 0.2s ease;
+}
+
+.custom-select-trigger[aria-expanded="true"] i {
+    transform: translateY(-50%) rotate(180deg);
+}
+
+.custom-select-options {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    right: 0;
+    z-index: 25;
+    margin: 0;
+    padding: 6px;
+    list-style: none;
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: 12px;
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+}
+
+.custom-select-option {
+    text-align: center;
+    padding: 10px;
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-size: 15px;
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+.custom-select-option:hover {
+    background: var(--surface-soft);
+}
+
+.custom-select-option[aria-selected="true"] {
+    background: rgba(139, 92, 246, 0.28);
+    color: #ede9fe;
+}
+
+/* Ensure the hidden attribute wins over the display values set above */
+.emoji-panel[hidden],
+.reaction-picker[hidden],
+.shared-interests[hidden] {
+    display: none;
 }

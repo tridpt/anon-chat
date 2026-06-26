@@ -34,11 +34,18 @@
                     <p class="subtitle" data-i18n="subtitle">Enter your alias and interests to find a chat partner.</p>
                     <form id="login-form">
                         <input type="text" id="username-input" data-i18n-placeholder="alias_placeholder" placeholder="Your Alias..." required autocomplete="off" maxlength="20">
-                        <select id="language-input" data-i18n-title="lang_pref_label" aria-label="Language preference">
-                            <option value="any" data-i18n="lang_any">Any language</option>
-                            <option value="vi">Tiếng Việt</option>
-                            <option value="en">English</option>
-                        </select>
+                        <div class="custom-select" id="language-select">
+                            <button type="button" id="language-trigger" class="custom-select-trigger" aria-haspopup="listbox" aria-expanded="false" data-i18n-title="lang_pref_label" aria-label="Language preference">
+                                <span id="language-value">Any language</span>
+                                <i class="fa-solid fa-chevron-down"></i>
+                            </button>
+                            <ul id="language-options" class="custom-select-options" role="listbox" hidden>
+                                <li class="custom-select-option" role="option" data-value="any" data-i18n="lang_any">Any language</li>
+                                <li class="custom-select-option" role="option" data-value="vi">Tiếng Việt</li>
+                                <li class="custom-select-option" role="option" data-value="en">English</li>
+                            </ul>
+                            <input type="hidden" id="language-input" value="any">
+                        </div>
                         <div class="interest-picker">
                             <input type="text" id="interests-input" data-i18n-placeholder="interests_placeholder" placeholder="Interests (e.g., anime, code, music)" autocomplete="off" maxlength="200">
                             <p id="interest-hint" class="interest-hint" data-i18n="interest_hint">Pick a few or type your own.</p>
@@ -70,8 +77,10 @@
                         <button type="submit" class="btn-primary" data-i18n="start_btn">Start Chatting</button>
                     </form>
                     <p id="login-error" class="form-error" role="status" aria-live="polite" hidden></p>
-                    <button id="manage-blocks-btn" type="button" class="text-btn" data-i18n="manage_blocks">Manage blocked people</button>
                 </div>
+                <button id="manage-blocks-btn" type="button" class="corner-btn" data-i18n-title="manage_blocks" title="Manage blocked people" aria-label="Manage blocked people">
+                    <i class="fa-solid fa-user-slash"></i>
+                </button>
             </div>
 
             <!-- WAITING SCREEN -->
@@ -81,6 +90,7 @@
                     <h2 id="waiting-title" data-i18n="waiting_title">Looking for a partner...</h2>
                     <p id="waiting-detail" data-i18n="waiting_detail" aria-live="polite">Please wait while we connect you to someone.</p>
                     <p id="queue-status" class="queue-status" aria-live="polite"></p>
+                    <button id="cancel-waiting-btn" type="button" class="btn-secondary cancel-waiting-btn" data-i18n="cancel_search">Cancel search</button>
                 </div>
             </div>
 

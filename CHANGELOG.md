@@ -7,6 +7,22 @@ and the project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- A cancel button on the waiting screen to leave the queue and return to login.
+
+### Changed
+- Compacted the login screen layout and replaced the native language `<select>` with a
+  custom, theme-aware dropdown with centered options.
+- Interest chips now insert the localized (translated) label.
+- Moved "manage blocked people" to a corner icon button on the login screen.
+- Reduced the no-match fallback pairing time from 10s to 5s.
+
+### Fixed
+- Emoji picker and reaction panels not closing because a CSS `display` value overrode
+  the `hidden` attribute.
+- Centered the blocked-people and report modal dialogs (were pinned to the top-left).
+- Login form no longer needs a visible scrollbar; the language dropdown options are readable.
+
 ## [1.1.0] - 2026-06-26
 
 ### Added

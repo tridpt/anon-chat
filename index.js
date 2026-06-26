@@ -15,6 +15,7 @@ const LIMITS = {
     maxReportReasonLength: 300,
     maxBlockedClientIds: 100,
     maxQueueSize: 1000,
+    fallbackMatchMs: 5_000,
     maxPayloadBytes: 10_000,
     messageRate: { max: 8, windowMs: 10_000 },
     typingRate: { max: 1, windowMs: 750 },
@@ -543,16 +544,16 @@ function createChatServer({
             if (hasSharedInterest) return index;
         }
 
-        const user1WaitedLongEnough = now - user1.joinTime >= 10_000;
+        const user1WaitedLongEnough = now - user1.joinTime >= LIMITS.fallbackMatchMs;
         for (let index = startIndex; index < waitingQueue.length; index++) {
             const user2 = waitingQueue[index];
-            const user2WaitedLongEnough = !user2.disconnected && now - user2.joinTime >= 10_000;
+            const user2WaitedLongEnough = !user2.disconnected && now - user2.joinTime >= LIMITS.fallbackMatchMs;
             if (!user2.disconnected && canMatch(user1, user2) && hasCompatibleLanguage(user1, user2) && (user1WaitedLongEnough || user2WaitedLongEnough)) return index;
         }
 
         for (let index = startIndex; index < waitingQueue.length; index++) {
             const user2 = waitingQueue[index];
-            const user2WaitedLongEnough = !user2.disconnected && now - user2.joinTime >= 10_000;
+            const user2WaitedLongEnough = !user2.disconnected && now - user2.joinTime >= LIMITS.fallbackMatchMs;
             if (!user2.disconnected && canMatch(user1, user2) && (user1WaitedLongEnough || user2WaitedLongEnough)) return index;
         }
 

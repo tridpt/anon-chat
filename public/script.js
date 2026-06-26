@@ -247,9 +247,13 @@ function getInterestTokens() {
 function syncInterestOptions() {
     const selectedInterests = new Set(getInterestTokens());
     interestOptionButtons.forEach(button => {
-        const selected = selectedInterests.has(button.dataset.interest);
+        const selected = selectedInterests.has(interestLabel(button));
         button.setAttribute('aria-pressed', String(selected));
     });
+}
+
+function interestLabel(button) {
+    return button.textContent.trim().replace(/\s+/g, ' ').toLowerCase();
 }
 
 function setInterestTokens(tokens) {
@@ -259,7 +263,7 @@ function setInterestTokens(tokens) {
 
 interestOptionButtons.forEach(button => {
     button.addEventListener('click', () => {
-        const interest = button.dataset.interest;
+        const interest = interestLabel(button);
         const tokens = getInterestTokens();
         const existingIndex = tokens.indexOf(interest);
         if (existingIndex === -1) {
@@ -273,6 +277,7 @@ interestOptionButtons.forEach(button => {
 });
 
 interestsInput.addEventListener('input', syncInterestOptions);
+document.addEventListener('i18n:changed', syncInterestOptions);
 
 function renderBlockedPartners() {
     blockedList.innerHTML = '';
@@ -587,6 +592,7 @@ document.addEventListener('keydown', event => {
     if (event.key === 'Escape') {
         closeEmojiPanel();
         closeReactionPicker();
+        closeLanguageOptions();
     }
 });
 
@@ -686,6 +692,62 @@ function notify(title, body) {
         // Ignore notification failures; they are non-critical.
     }
 }
+
+// Custom language dropdown
+const languageSelect = document.getElementById('language-select');
+const languageTrigger = document.getElementById('language-trigger');
+const languageValue = document.getElementById('language-value');
+const languageOptions = document.getElementById('language-options');
+const languageOptionItems = [...languageOptions.querySelectorAll('.custom-select-option')];
+
+function languageOptionLabel(value) {
+    const option = languageOptionItems.find(item => item.dataset.value === value);
+    return option ? option.textContent.trim() : value;
+}
+
+function setLanguageValue(value) {
+    languageInput.value = value;
+    languageValue.textContent = languageOptionLabel(value);
+    languageOptionItems.forEach(item => {
+        item.setAttribute('aria-selected', String(item.dataset.value === value));
+    });
+}
+
+function openLanguageOptions() {
+    languageOptions.hidden = false;
+    languageTrigger.setAttribute('aria-expanded', 'true');
+}
+
+function closeLanguageOptions() {
+    languageOptions.hidden = true;
+    languageTrigger.setAttribute('aria-expanded', 'false');
+}
+
+languageTrigger.addEventListener('click', event => {
+    event.stopPropagation();
+    if (languageOptions.hidden) {
+        openLanguageOptions();
+    } else {
+        closeLanguageOptions();
+    }
+});
+
+languageOptionItems.forEach(item => {
+    item.addEventListener('click', () => {
+        setLanguageValue(item.dataset.value);
+        closeLanguageOptions();
+    });
+});
+
+document.addEventListener('click', event => {
+    if (!languageSelect.contains(event.target)) closeLanguageOptions();
+});
+
+document.addEventListener('i18n:changed', () => {
+    languageValue.textContent = languageOptionLabel(languageInput.value);
+});
+
+setLanguageValue('any');
 
 // 1. Login Logic
 loginForm.addEventListener('submit', (e) => {
@@ -795,6 +857,19 @@ skipBtn.addEventListener('click', () => {
     socket.emit('skip');
     setWaitingStatus(t('finding_new_title'), t('finding_new_detail'));
     showScreen('waiting-screen');
+});
+
+const cancelWaitingBtn = document.getElementById('cancel-waiting-btn');
+cancelWaitingBtn.addEventListener('click', () => {
+    hasActiveSession = false;
+    isInChat = false;
+    currentPartnerId = null;
+    currentPartnerName = '';
+    typingIndicator.style.display = 'none';
+    socket.disconnect();
+    queueStatus.innerText = '';
+    clearLoginError();
+    showScreen('login-screen');
 });
 
 function blockCurrentPartner() {
