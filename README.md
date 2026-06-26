@@ -1,5 +1,9 @@
 # GhostChat
 
+[![CI](https://github.com/tridpt/anon-chat/actions/workflows/ci.yml/badge.svg)](https://github.com/tridpt/anon-chat/actions/workflows/ci.yml)
+[![License: ISC](https://img.shields.io/badge/License-ISC-blue.svg)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg)](package.json)
+
 Anonymous, one-on-one chat with interest-based matching. GhostChat does not create accounts or store chat history.
 
 ## Features

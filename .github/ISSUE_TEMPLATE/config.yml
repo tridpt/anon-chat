@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Tài liệu kỹ thuật (Tiếng Việt)
+    url: https://github.com/tridpt/anon-chat/blob/main/TAI_LIEU.md
+    about: Kiến trúc và chi tiết kỹ thuật trước khi mở issue.
+  - name: README
+    url: https://github.com/tridpt/anon-chat/blob/main/README.md
+    about: Tổng quan tính năng, cách chạy và cấu hình.
+  - name: Security policy
+    url: https://github.com/tridpt/anon-chat/blob/main/SECURITY.md
+    about: Vui lòng báo lỗi bảo mật riêng tư, không mở issue công khai.

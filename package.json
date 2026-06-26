@@ -9,7 +9,7 @@
     "test": "node --test"
   },
   "keywords": [],
-  "author": "",
+  "author": "tridpt",
   "license": "ISC",
   "engines": {
     "node": ">=20"
