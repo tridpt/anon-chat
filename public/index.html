@@ -15,6 +15,13 @@
         <div class="orb orb-2"></div>
         <div class="orb orb-3"></div>
 
+        <button id="theme-toggle" type="button" class="theme-toggle" data-i18n-title="theme_toggle" title="Toggle light/dark theme" aria-label="Toggle light or dark theme" aria-pressed="false">
+            <i class="fa-solid fa-moon"></i>
+        </button>
+        <button id="lang-toggle" type="button" class="lang-toggle" data-i18n-title="ui_lang_toggle" title="Switch interface language" aria-label="Switch interface language">
+            <span id="lang-toggle-label">EN</span>
+        </button>
+
         <main class="chat-interface">
             
             <!-- LOGIN SCREEN -->
@@ -24,46 +31,46 @@
                         <i class="fa-solid fa-ghost"></i>
                         <h1>GhostChat</h1>
                     </div>
-                    <p class="subtitle">Enter your alias and interests to find a chat partner.</p>
+                    <p class="subtitle" data-i18n="subtitle">Enter your alias and interests to find a chat partner.</p>
                     <form id="login-form">
-                        <input type="text" id="username-input" placeholder="Your Alias..." required autocomplete="off" maxlength="20">
-                        <select id="language-input" aria-label="Language preference">
-                            <option value="any">Any language</option>
+                        <input type="text" id="username-input" data-i18n-placeholder="alias_placeholder" placeholder="Your Alias..." required autocomplete="off" maxlength="20">
+                        <select id="language-input" data-i18n-title="lang_pref_label" aria-label="Language preference">
+                            <option value="any" data-i18n="lang_any">Any language</option>
                             <option value="vi">Tiếng Việt</option>
                             <option value="en">English</option>
                         </select>
                         <div class="interest-picker">
-                            <input type="text" id="interests-input" placeholder="Interests (e.g., anime, code, music)" autocomplete="off" maxlength="200">
-                            <p id="interest-hint" class="interest-hint">Pick a few or type your own.</p>
+                            <input type="text" id="interests-input" data-i18n-placeholder="interests_placeholder" placeholder="Interests (e.g., anime, code, music)" autocomplete="off" maxlength="200">
+                            <p id="interest-hint" class="interest-hint" data-i18n="interest_hint">Pick a few or type your own.</p>
                             <div class="interest-options" aria-labelledby="interest-hint">
-                                <button type="button" class="interest-option" data-interest="anime" aria-pressed="false">Anime</button>
-                                <button type="button" class="interest-option" data-interest="music" aria-pressed="false">Music</button>
-                                <button type="button" class="interest-option" data-interest="gaming" aria-pressed="false">Gaming</button>
-                                <button type="button" class="interest-option" data-interest="movies" aria-pressed="false">Movies</button>
-                                <button type="button" class="interest-option" data-interest="coding" aria-pressed="false">Coding</button>
-                                <button type="button" class="interest-option" data-interest="travel" aria-pressed="false">Travel</button>
-                                <button type="button" class="interest-option" data-interest="books" aria-pressed="false">Books</button>
-                                <button type="button" class="interest-option" data-interest="fitness" aria-pressed="false">Fitness</button>
-                                <button type="button" class="interest-option" data-interest="food" aria-pressed="false">Food</button>
-                                <button type="button" class="interest-option" data-interest="art" aria-pressed="false">Art</button>
+                                <button type="button" class="interest-option" data-interest="anime" data-i18n="int_anime" aria-pressed="false">Anime</button>
+                                <button type="button" class="interest-option" data-interest="music" data-i18n="int_music" aria-pressed="false">Music</button>
+                                <button type="button" class="interest-option" data-interest="gaming" data-i18n="int_gaming" aria-pressed="false">Gaming</button>
+                                <button type="button" class="interest-option" data-interest="movies" data-i18n="int_movies" aria-pressed="false">Movies</button>
+                                <button type="button" class="interest-option" data-interest="coding" data-i18n="int_coding" aria-pressed="false">Coding</button>
+                                <button type="button" class="interest-option" data-interest="travel" data-i18n="int_travel" aria-pressed="false">Travel</button>
+                                <button type="button" class="interest-option" data-interest="books" data-i18n="int_books" aria-pressed="false">Books</button>
+                                <button type="button" class="interest-option" data-interest="fitness" data-i18n="int_fitness" aria-pressed="false">Fitness</button>
+                                <button type="button" class="interest-option" data-interest="food" data-i18n="int_food" aria-pressed="false">Food</button>
+                                <button type="button" class="interest-option" data-interest="art" data-i18n="int_art" aria-pressed="false">Art</button>
                             </div>
                         </div>
                         <section class="safety-notice" aria-labelledby="safety-title">
-                            <h2 id="safety-title">A safer anonymous chat</h2>
-                            <p>Be kind. No harassment, scams, hate, or explicit content. Chats are not saved, but reports are reviewed by moderators.</p>
+                            <h2 id="safety-title" data-i18n="safety_title">A safer anonymous chat</h2>
+                            <p data-i18n="safety_text">Be kind. No harassment, scams, hate, or explicit content. Chats are not saved, but reports are reviewed by moderators.</p>
                             <label class="safety-check">
                                 <input id="age-confirmation" type="checkbox" required>
-                                I confirm that I am 18 or older.
+                                <span data-i18n="age_confirm">I confirm that I am 18 or older.</span>
                             </label>
                             <label class="safety-check">
                                 <input id="rules-confirmation" type="checkbox" required>
-                                I agree to follow the Community Rules.
+                                <span data-i18n="rules_confirm">I agree to follow the Community Rules.</span>
                             </label>
                         </section>
-                        <button type="submit" class="btn-primary">Start Chatting</button>
+                        <button type="submit" class="btn-primary" data-i18n="start_btn">Start Chatting</button>
                     </form>
                     <p id="login-error" class="form-error" role="status" aria-live="polite" hidden></p>
-                    <button id="manage-blocks-btn" type="button" class="text-btn">Manage blocked people</button>
+                    <button id="manage-blocks-btn" type="button" class="text-btn" data-i18n="manage_blocks">Manage blocked people</button>
                 </div>
             </div>
 
@@ -71,8 +78,8 @@
             <div id="waiting-screen" class="screen">
                 <div class="waiting-card">
                     <div class="spinner"></div>
-                    <h2 id="waiting-title">Looking for a partner...</h2>
-                    <p id="waiting-detail" aria-live="polite">Please wait while we connect you to someone.</p>
+                    <h2 id="waiting-title" data-i18n="waiting_title">Looking for a partner...</h2>
+                    <p id="waiting-detail" data-i18n="waiting_detail" aria-live="polite">Please wait while we connect you to someone.</p>
                     <p id="queue-status" class="queue-status" aria-live="polite"></p>
                 </div>
             </div>
@@ -86,19 +93,19 @@
                         </div>
                         <div class="partner-details">
                             <h2 id="partner-name">Partner Name</h2>
-                            <span class="status-text"><span class="pulse"></span> Connected</span>
+                            <span class="status-text"><span class="pulse"></span> <span data-i18n="connected">Connected</span></span>
                             <div id="shared-interests" class="shared-interests" hidden></div>
                         </div>
                     </div>
                     <div class="actions">
-                        <button id="report-btn" type="button" class="btn-secondary" title="Report this person">
-                            <i class="fa-solid fa-flag"></i> Report
+                        <button id="report-btn" type="button" class="btn-secondary" data-i18n-title="report" title="Report this person">
+                            <i class="fa-solid fa-flag"></i> <span data-i18n="report">Report</span>
                         </button>
-                        <button id="block-btn" type="button" class="btn-danger" title="Block this person and find someone else">
-                            <i class="fa-solid fa-ban"></i> Block
+                        <button id="block-btn" type="button" class="btn-danger" data-i18n-title="block" title="Block this person and find someone else">
+                            <i class="fa-solid fa-ban"></i> <span data-i18n="block">Block</span>
                         </button>
-                        <button id="skip-btn" class="btn-secondary" title="Skip to next person">
-                            <i class="fa-solid fa-forward-step"></i> Skip
+                        <button id="skip-btn" class="btn-secondary" data-i18n-title="skip" title="Skip to next person">
+                            <i class="fa-solid fa-forward-step"></i> <span data-i18n="skip">Skip</span>
                         </button>
                     </div>
                 </header>
@@ -107,8 +114,8 @@
                     <div class="icebreaker-heading">
                         <span class="icebreaker-spark">✦</span>
                         <div>
-                            <h3 id="icebreaker-title">Break the ice</h3>
-                            <p>Pick a prompt to get the conversation moving.</p>
+                            <h3 id="icebreaker-title" data-i18n="icebreaker_title">Break the ice</h3>
+                            <p data-i18n="icebreaker_subtitle">Pick a prompt to get the conversation moving.</p>
                         </div>
                     </div>
                     <div id="icebreaker-prompts" class="icebreaker-prompts"></div>
@@ -126,9 +133,16 @@
                 </div>
 
                 <form id="chat-form" class="chat-input-area">
+                    <div class="emoji-wrapper">
+                        <button id="emoji-btn" type="button" class="emoji-btn" title="Insert emoji" aria-label="Insert emoji" aria-expanded="false">
+                            <i class="fa-regular fa-face-smile"></i>
+                        </button>
+                        <div id="emoji-panel" class="emoji-panel" role="menu" aria-label="Emoji picker" hidden></div>
+                    </div>
                     <input 
                         type="text" 
                         id="msg-input" 
+                        data-i18n-placeholder="msg_placeholder"
                         placeholder="Type a mysterious message..." 
                         autocomplete="off" 
                         maxlength="500"
@@ -142,36 +156,36 @@
 
             <dialog id="report-dialog" class="report-dialog" aria-labelledby="report-title">
                 <form id="report-form" class="report-form">
-                    <h2 id="report-title">Report this person</h2>
-                    <p>Your report is sent to the server log for moderator review.</p>
-                    <label for="report-reason">Reason</label>
+                    <h2 id="report-title" data-i18n="report_title">Report this person</h2>
+                    <p data-i18n="report_desc">Your report is sent to the server log for moderator review.</p>
+                    <label for="report-reason" data-i18n="report_reason_label">Reason</label>
                     <select id="report-reason" required>
-                        <option value="Harassment or bullying">Harassment or bullying</option>
-                        <option value="Hate or discrimination">Hate or discrimination</option>
-                        <option value="Sexual or explicit content">Sexual or explicit content</option>
-                        <option value="Spam or scam">Spam or scam</option>
-                        <option value="Other safety concern">Other safety concern</option>
+                        <option value="Harassment or bullying" data-i18n="reason_harassment">Harassment or bullying</option>
+                        <option value="Hate or discrimination" data-i18n="reason_hate">Hate or discrimination</option>
+                        <option value="Sexual or explicit content" data-i18n="reason_sexual">Sexual or explicit content</option>
+                        <option value="Spam or scam" data-i18n="reason_spam">Spam or scam</option>
+                        <option value="Other safety concern" data-i18n="reason_other">Other safety concern</option>
                     </select>
-                    <label for="report-note">Additional details (optional)</label>
-                    <textarea id="report-note" maxlength="240" placeholder="Briefly describe what happened."></textarea>
+                    <label for="report-note" data-i18n="report_note_label">Additional details (optional)</label>
+                    <textarea id="report-note" maxlength="240" data-i18n-placeholder="report_note_placeholder" placeholder="Briefly describe what happened."></textarea>
                     <label class="checkbox-label">
                         <input id="report-and-block" type="checkbox" checked>
-                        Block this person and find another match
+                        <span data-i18n="report_and_block">Block this person and find another match</span>
                     </label>
                     <div class="dialog-actions">
-                        <button id="report-cancel" type="button" class="btn-secondary">Cancel</button>
-                        <button type="submit" class="btn-danger">Send report</button>
+                        <button id="report-cancel" type="button" class="btn-secondary" data-i18n="cancel">Cancel</button>
+                        <button type="submit" class="btn-danger" data-i18n="send_report">Send report</button>
                     </div>
                 </form>
             </dialog>
 
             <dialog id="blocked-dialog" class="report-dialog blocked-dialog" aria-labelledby="blocked-title">
                 <section class="report-form">
-                    <h2 id="blocked-title">Blocked people</h2>
-                    <p>Blocked people will not be matched with this browser again.</p>
+                    <h2 id="blocked-title" data-i18n="blocked_title">Blocked people</h2>
+                    <p data-i18n="blocked_desc">Blocked people will not be matched with this browser again.</p>
                     <div id="blocked-list" class="blocked-list"></div>
                     <div class="dialog-actions">
-                        <button id="blocked-close" type="button" class="btn-secondary">Done</button>
+                        <button id="blocked-close" type="button" class="btn-secondary" data-i18n="done">Done</button>
                     </div>
                 </section>
             </dialog>
@@ -180,6 +194,7 @@
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
+    <script src="i18n.js"></script>
     <script src="script.js"></script>
 </body>
 </html>

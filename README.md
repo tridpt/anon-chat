@@ -10,7 +10,12 @@ Anonymous, one-on-one chat with interest-based matching. GhostChat does not crea
 - Select popular interest chips or type custom interests before matching.
 - Require self-attested 18+ and Community Rules acceptance before joining the queue.
 - Skip a chat, block a current partner, and manage or undo blocks in the browser.
+- Insert emojis from a built-in picker and switch between dark and light themes (saved per browser).
+- React to individual messages with emoji, and get a browser notification on a match or new message when the tab is hidden.
+- Switch the interface language between English and Vietnamese; the choice is detected from the browser and saved per browser.
 - Report a current partner with a reason, then review and resolve reports in `/admin`.
+- Mask basic profanity, limit links per message, and auto-suspend clients that pass a report threshold.
+- Show a live count of people currently online alongside the queue status.
 - Server-side validation, message-size limits, queue limits, and per-socket flood controls.
 
 ## Run locally
@@ -43,6 +48,7 @@ npm test
 | `PORT` | `3000` | HTTP and Socket.IO port. |
 | `DATA_DIR` | `./data` | Directory where durable report records are stored. |
 | `ADMIN_TOKEN` | _(required for admin)_ | Secret used to protect the moderation dashboard and API. |
+| `REDIS_URL` | _(optional)_ | Enables the Socket.IO Redis adapter for multi-instance deployments (e.g. `redis://localhost:6379`). |
 
 To enable moderation, set a strong token before starting the app:
 
@@ -61,7 +67,17 @@ The 18+ confirmation is a self-attestation, not identity or age verification. It
 
 Reports are validated, stored in `DATA_DIR/reports.json`, and also written as structured `REPORT {...}` server logs. The `/admin` dashboard can filter reports and mark them reviewed or resolved. Establish a moderation process and protect the `ADMIN_TOKEN`; the app deliberately does not store chat messages.
 
+Profanity masking covers a basic word list and can be extended in `index.js`. Auto-suspension is a lightweight safeguard: when an anonymous client is reported enough times within the configured window, it is temporarily blocked from matching. Active bans are persisted to `DATA_DIR/bans.json` (atomic write) and reloaded on startup, so they survive restarts and redeploys. Expired bans are pruned automatically. This is not a substitute for human moderation.
+
+A public `GET /health` endpoint reports `status`, uptime, current online and waiting counts, total matches, the rolling average match wait, and the number of active bans. Use it for uptime checks and basic monitoring.
+
 For a production release, also put the app behind HTTPS, add a reverse-proxy/IP-level rate limit, publish a privacy policy, and monitor error and report logs.
+
+## Scaling to multiple instances
+
+Set `REDIS_URL` to attach the [Socket.IO Redis adapter](https://socket.io/docs/v4/redis-adapter/), which delivers events across instances. The `redis` and `@socket.io/redis-adapter` packages are listed as optional dependencies and are loaded only when `REDIS_URL` is set; if the connection fails at startup, the app logs the error and continues in single-instance mode.
+
+Note one current limitation: the matchmaking queue, partner relationships, bans, and online counts are still kept in each instance's memory. With several instances behind a load balancer you should therefore enable **sticky sessions** so a visitor stays on one instance for the duration of their session. In that setup each instance matches visitors within its own connected pool. Matching across the entire pool (a shared queue in Redis) and cross-instance partner state are a larger follow-up that builds on this adapter.
 
 ## Deploy with Docker
 

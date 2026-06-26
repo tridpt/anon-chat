@@ -142,7 +142,8 @@ test('publishes queue status to people waiting for a match', async t => {
     login(client, { username: 'Waiting', interests: 'music' });
     assert.deepEqual(await queueStatus, {
         waitingCount: 1,
-        estimatedWaitSeconds: null
+        estimatedWaitSeconds: null,
+        onlineCount: 1
     });
 });
 
