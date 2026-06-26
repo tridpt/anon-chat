@@ -1,6 +1,6 @@
 {
   "name": "anon-chat",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Anonymous one-on-one interest-based chat",
   "main": "index.js",
   "scripts": {

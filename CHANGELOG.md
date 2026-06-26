@@ -7,6 +7,8 @@ and the project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-06-26
+
 ### Added
 - Emoji picker in the message composer and per-message emoji reactions.
 - Dark/light interface theme toggle, saved per browser.
@@ -35,3 +37,6 @@ and the project follows [Semantic Versioning](https://semver.org/).
 - Moderation dashboard at `/admin` protected by `ADMIN_TOKEN`, with durable report storage.
 - Server-side validation, payload/size limits, queue limits, and per-socket rate limits.
 - Docker support.
+
+[Unreleased]: https://github.com/tridpt/anon-chat/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/tridpt/anon-chat/releases/tag/v1.1.0
