@@ -19,12 +19,40 @@ const LIMITS = {
     messageRate: { max: 8, windowMs: 10_000 },
     typingRate: { max: 1, windowMs: 750 },
     skipRate: { max: 5, windowMs: 10_000 },
+    reactionRate: { max: 15, windowMs: 10_000 },
     loginRate: { max: 3, windowMs: 60_000 },
     blockRate: { max: 5, windowMs: 60_000 },
-    reportRate: { max: 3, windowMs: 60 * 60_000 }
+    reportRate: { max: 3, windowMs: 60 * 60_000 },
+    maxLinksPerMessage: 3,
+    autoBan: { reportThreshold: 3, windowMs: 60 * 60_000, banDurationMs: 24 * 60 * 60_000 }
 };
+
+// Basic profanity list (English + common Vietnamese). Matched words are masked, not blocked,
+// so a single slip does not interrupt the conversation. Extend as needed for your community.
+const PROFANITY = [
+    'fuck', 'fucking', 'shit', 'bitch', 'asshole', 'bastard', 'dick', 'cunt', 'slut', 'whore',
+    'nigger', 'faggot', 'retard', 'rape',
+    'dit me', 'djtme', 'ditme', 'lon', 'cac', 'buoi', 'dcm', 'vcl', 'vl', 'dm', 'dmm', 'cak', 'loz', 'cdm'
+];
+const URL_PATTERN = /(https?:\/\/|www\.)\S+/gi;
+
+function escapeRegExp(value) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+const PROFANITY_PATTERN = new RegExp(`\\b(${PROFANITY.map(escapeRegExp).join('|')})\\b`, 'gi');
+
+function maskProfanity(text) {
+    return text.replace(PROFANITY_PATTERN, match => '*'.repeat(match.length));
+}
+
+function countLinks(text) {
+    const matches = text.match(URL_PATTERN);
+    return matches ? matches.length : 0;
+}
 const REPORT_STATUSES = new Set(['new', 'reviewed', 'resolved']);
 const LANGUAGES = new Set(['any', 'vi', 'en']);
+const REACTION_EMOJIS = new Set(['👍', '❤️', '😂', '😮', '😢', '🔥']);
 
 function isPlainObject(value) {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -133,6 +161,40 @@ function copyValue(value) {
     return JSON.parse(JSON.stringify(value));
 }
 
+// Optionally enables the Socket.IO Redis adapter so events are delivered across
+// multiple instances. Activated only when REDIS_URL is set; the redis packages are
+// loaded lazily so single-instance deployments need no extra dependencies.
+async function setupRedisAdapter(io, redisUrl, logger) {
+    if (!redisUrl) return null;
+
+    let pubClient;
+    let subClient;
+    try {
+        const { createClient } = require('redis');
+        const { createAdapter } = require('@socket.io/redis-adapter');
+        const reconnectStrategy = retries => (retries >= 3 ? new Error('Redis unavailable') : Math.min((retries + 1) * 150, 600));
+        pubClient = createClient({ url: redisUrl, socket: { reconnectStrategy } });
+        subClient = pubClient.duplicate();
+        const onError = error => logger.error?.(error);
+        pubClient.on('error', onError);
+        subClient.on('error', onError);
+        await Promise.all([pubClient.connect(), subClient.connect()]);
+        io.adapter(createAdapter(pubClient, subClient));
+        return { pubClient, subClient };
+    } catch (error) {
+        logger.error?.(error);
+        // Stop background reconnection attempts when Redis is unreachable at startup.
+        for (const client of [pubClient, subClient]) {
+            try {
+                client?.destroy?.();
+            } catch {
+                // Client may already be closed; ignore.
+            }
+        }
+        return null;
+    }
+}
+
 function createReportStore(dataDirectory) {
     const reportsFile = path.join(dataDirectory, 'reports.json');
     let reports = [];
@@ -191,18 +253,109 @@ function createReportStore(dataDirectory) {
     };
 }
 
+function createBanStore(dataDirectory) {
+    const bansFile = path.join(dataDirectory, 'bans.json');
+    let operationQueue = Promise.resolve();
+
+    function enqueue(operation) {
+        const task = operationQueue.then(operation, operation);
+        operationQueue = task.catch(() => undefined);
+        return task;
+    }
+
+    return {
+        load: () => enqueue(async () => {
+            await fs.mkdir(dataDirectory, { recursive: true });
+            try {
+                const contents = await fs.readFile(bansFile, 'utf8');
+                const parsed = JSON.parse(contents);
+                if (!Array.isArray(parsed)) throw new Error('Ban store must contain an array.');
+                const now = Date.now();
+                return parsed.filter(entry =>
+                    isPlainObject(entry)
+                    && typeof entry.clientId === 'string'
+                    && typeof entry.banUntil === 'number'
+                    && entry.banUntil > now
+                );
+            } catch (error) {
+                if (error.code !== 'ENOENT') throw error;
+                return [];
+            }
+        }),
+        save: entries => enqueue(async () => {
+            await fs.mkdir(dataDirectory, { recursive: true });
+            const temporaryFile = `${bansFile}.${process.pid}.${Date.now()}.tmp`;
+            await fs.writeFile(temporaryFile, `${JSON.stringify(entries, null, 2)}\n`, 'utf8');
+            await fs.rename(temporaryFile, bansFile);
+        })
+    };
+}
+
 function createChatServer({
     logger = console,
     dataDir = process.env.DATA_DIR || path.join(__dirname, 'data'),
-    adminToken = process.env.ADMIN_TOKEN
+    adminToken = process.env.ADMIN_TOKEN,
+    redisUrl = process.env.REDIS_URL
 } = {}) {
     const app = express();
     const server = http.createServer(app);
     const io = new Server(server, { maxHttpBufferSize: LIMITS.maxPayloadBytes });
     const reportStore = createReportStore(dataDir);
+    const banStore = createBanStore(dataDir);
+    let redisClients = null;
 
     let waitingQueue = [];
     let averageMatchWaitMs = null;
+    let totalMatches = 0;
+    const recentReportsByClient = new Map();
+    const bannedClients = new Map();
+
+    function isClientBanned(clientId, now = Date.now()) {
+        const banUntil = bannedClients.get(clientId);
+        if (banUntil === undefined) return false;
+        if (banUntil <= now) {
+            bannedClients.delete(clientId);
+            return false;
+        }
+        return true;
+    }
+
+    function registerReportAgainst(clientId, now = Date.now()) {
+        const windowMs = LIMITS.autoBan.windowMs;
+        const timestamps = (recentReportsByClient.get(clientId) ?? []).filter(time => now - time < windowMs);
+        timestamps.push(now);
+        recentReportsByClient.set(clientId, timestamps);
+
+        if (timestamps.length >= LIMITS.autoBan.reportThreshold) {
+            bannedClients.set(clientId, now + LIMITS.autoBan.banDurationMs);
+            recentReportsByClient.delete(clientId);
+            persistBans();
+            return true;
+        }
+        return false;
+    }
+
+    function persistBans() {
+        const now = Date.now();
+        const entries = [];
+        for (const [clientId, banUntil] of bannedClients.entries()) {
+            if (banUntil > now) {
+                entries.push({ clientId, banUntil });
+            } else {
+                bannedClients.delete(clientId);
+            }
+        }
+        return banStore.save(entries).catch(logError);
+    }
+
+    function removeBannedClient(clientId) {
+        for (const socket of io.sockets.sockets.values()) {
+            if (socket.clientId !== clientId) continue;
+            removeFromQueue(socket);
+            handleLeaveRoom(socket);
+            sendError(socket, 'banned', 'You can no longer chat right now because of multiple reports. Please try again later.');
+        }
+    }
 
     function log(message) {
         if (typeof logger.info === 'function') {
@@ -259,6 +412,18 @@ function createChatServer({
     }
 
     app.use(express.json({ limit: '5kb' }));
+    app.get('/health', (request, response) => {
+        response.set('Cache-Control', 'no-store');
+        response.json({
+            status: 'ok',
+            uptimeSeconds: Math.round(process.uptime()),
+            online: io.engine.clientsCount,
+            waiting: waitingQueue.length,
+            totalMatches,
+            averageMatchWaitMs: averageMatchWaitMs === null ? null : Math.round(averageMatchWaitMs),
+            activeBans: bannedClients.size
+        });
+    });
     app.get('/admin', (request, response) => {
         response.sendFile(path.join(__dirname, 'public', 'admin.html'));
     });
@@ -330,7 +495,7 @@ function createChatServer({
         const estimatedWaitSeconds = averageMatchWaitMs === null
             ? null
             : Math.max(5, Math.min(120, Math.round(averageMatchWaitMs / 5_000) * 5));
-        return { waitingCount: waitingQueue.length, estimatedWaitSeconds };
+        return { waitingCount: waitingQueue.length, estimatedWaitSeconds, onlineCount: io.engine.clientsCount };
     }
 
     function broadcastQueueStatus() {
@@ -448,6 +613,7 @@ function createChatServer({
             const sharedInterests = user1.interests.filter(interest => user2.interests.includes(interest));
             user1.emit('matched', { partnerName: user2.username, partnerColor: user2.color, partnerId: user2.clientId, partnerLanguage: user2.language, sharedInterests });
             user2.emit('matched', { partnerName: user1.username, partnerColor: user1.color, partnerId: user1.clientId, partnerLanguage: user1.language, sharedInterests });
+            totalMatches++;
             log(`Matched ${user1.username} and ${user2.username} in room ${roomId}. Shared: ${sharedInterests.join(',')}`);
         }
 
@@ -508,6 +674,11 @@ function createChatServer({
                 return;
             }
 
+            if (isClientBanned(parsed.value.clientId)) {
+                sendError(socket, 'banned', 'You can no longer chat right now because of multiple reports. Please try again later.');
+                return;
+            }
+
             socket.username = parsed.value.username;
             socket.interests = parsed.value.interests;
             socket.language = parsed.value.language;
@@ -531,12 +702,31 @@ function createChatServer({
                 return;
             }
 
+            if (countLinks(parsed.value) > LIMITS.maxLinksPerMessage) {
+                sendError(socket, 'invalid_message', `Messages can contain at most ${LIMITS.maxLinksPerMessage} links.`);
+                return;
+            }
+
             io.to(socket.currentRoom).emit('message', {
                 type: 'chat',
+                id: crypto.randomUUID(),
                 username: socket.username,
                 color: socket.color,
-                text: parsed.value,
+                text: maskProfanity(parsed.value),
                 timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            });
+        }));
+
+        socket.on('reactMessage', safelyHandle(socket, data => {
+            if (!socket.currentRoom) return;
+            if (isRateLimited(socket, 'reaction', LIMITS.reactionRate)) return;
+            if (!isPlainObject(data) || typeof data.messageId !== 'string' || !REACTION_EMOJIS.has(data.emoji)) return;
+            if (!/^[A-Za-z0-9-]{1,64}$/.test(data.messageId)) return;
+
+            io.to(socket.currentRoom).emit('message_reaction', {
+                messageId: data.messageId,
+                emoji: data.emoji,
+                from: socket.clientId
             });
         }));
 
@@ -617,6 +807,12 @@ function createChatServer({
             });
             logReport(report);
             socket.emit('report_received');
+
+            if (registerReportAgainst(partner.clientId)) {
+                log(`Auto-banned client after reaching the report threshold.`);
+                removeBannedClient(partner.clientId);
+                broadcastQueueStatus();
+            }
         }));
 
         socket.on('disconnect', () => {
@@ -627,6 +823,20 @@ function createChatServer({
         });
     });
 
+    banStore.load().then(entries => {
+        for (const entry of entries) {
+            bannedClients.set(entry.clientId, entry.banUntil);
+        }
+        log(`Loaded ${entries.length} active ban(s) from storage.`);
+    }).catch(logError);
+
+    setupRedisAdapter(io, redisUrl, logger).then(clients => {
+        if (clients) {
+            redisClients = clients;
+            log('Redis adapter enabled for multi-instance event delivery.');
+        }
+    }).catch(logError);
+
     const matchingInterval = setInterval(matchUsers, 2000);
     matchingInterval.unref();
 
@@ -636,7 +846,19 @@ function createChatServer({
         io,
         close: () => new Promise((resolve, reject) => {
             clearInterval(matchingInterval);
-            io.close(error => error ? reject(error) : resolve());
+            io.close(async error => {
+                try {
+                    if (redisClients) {
+                        await Promise.all([
+                            redisClients.pubClient.quit(),
+                            redisClients.subClient.quit()
+                        ]);
+                    }
+                } catch (closeError) {
+                    logError(closeError);
+                }
+                error ? reject(error) : resolve();
+            });
         })
     };
 }

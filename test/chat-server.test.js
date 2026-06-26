@@ -142,7 +142,8 @@ test('publishes queue status to people waiting for a match', async t => {
     login(client, { username: 'Waiting', interests: 'music' });
     assert.deepEqual(await queueStatus, {
         waitingCount: 1,
-        estimatedWaitSeconds: null
+        estimatedWaitSeconds: null,
+        onlineCount: 1
     });
 });
 
@@ -289,4 +290,176 @@ test('persists reports and requires an admin token to review them', async t => {
     assert.equal(report.status, 'resolved');
     assert.equal(report.moderationNote, 'Blocked repeat spammer.');
     assert.match(report.reviewedAt, /^\d{4}-\d{2}-\d{2}T/);
+});
+
+test('masks profanity before broadcasting a message', async t => {
+    const url = await createTestServer(t);
+    const alice = await connectClient(t, url);
+    const bob = await connectClient(t, url);
+
+    const aliceMatched = waitForEvent(alice, 'matched');
+    const bobMatched = waitForEvent(bob, 'matched');
+    login(alice, { username: 'Alice', interests: 'music', clientId: 'client-alice-12345' });
+    login(bob, { username: 'Bob', interests: 'music', clientId: 'client-bob-123456' });
+    await Promise.all([aliceMatched, bobMatched]);
+
+    const bobMessage = waitForEvent(bob, 'message');
+    alice.emit('chatMessage', 'you are a shit person');
+    assert.equal((await bobMessage).text, 'you are a **** person');
+});
+
+test('rejects messages with too many links', async t => {
+    const url = await createTestServer(t);
+    const alice = await connectClient(t, url);
+    const bob = await connectClient(t, url);
+
+    const aliceMatched = waitForEvent(alice, 'matched');
+    const bobMatched = waitForEvent(bob, 'matched');
+    login(alice, { username: 'Alice', interests: 'music', clientId: 'client-alice-12345' });
+    login(bob, { username: 'Bob', interests: 'music', clientId: 'client-bob-123456' });
+    await Promise.all([aliceMatched, bobMatched]);
+
+    const tooManyLinks = waitForEvent(alice, 'app_error');
+    alice.emit('chatMessage', 'http://a.com http://b.com http://c.com http://d.com');
+    const error = await tooManyLinks;
+    assert.equal(error.code, 'invalid_message');
+    assert.match(error.message, /at most 3 links/);
+});
+
+test('relays valid reactions and ignores invalid ones', async t => {
+    const url = await createTestServer(t);
+    const alice = await connectClient(t, url);
+    const bob = await connectClient(t, url);
+    const bobId = 'client-bob-123456';
+
+    const aliceMatched = waitForEvent(alice, 'matched');
+    const bobMatched = waitForEvent(bob, 'matched');
+    login(alice, { username: 'Alice', interests: 'music', clientId: 'client-alice-12345' });
+    login(bob, { username: 'Bob', interests: 'music', clientId: bobId });
+    await Promise.all([aliceMatched, bobMatched]);
+
+    const bobMessage = waitForEvent(bob, 'message');
+    alice.emit('chatMessage', 'hello there');
+    const messageId = (await bobMessage).id;
+    assert.ok(messageId);
+
+    const firstReaction = waitForEvent(alice, 'message_reaction');
+    const bobReaction = waitForEvent(bob, 'message_reaction');
+    bob.emit('reactMessage', { messageId, emoji: '👍' });
+    const reaction = await firstReaction;
+    assert.deepEqual(reaction, { messageId, emoji: '👍', from: bobId });
+    await bobReaction;
+
+    // An unsupported emoji is dropped, so the next reaction received is the valid one.
+    const nextReaction = waitForEvent(alice, 'message_reaction');
+    bob.emit('reactMessage', { messageId, emoji: '💀' });
+    bob.emit('reactMessage', { messageId, emoji: '❤️' });
+    assert.equal((await nextReaction).emoji, '❤️');
+});
+
+test('auto-bans a client after repeated reports and blocks re-login', async t => {
+    const url = await createTestServer(t);
+    const alice = await connectClient(t, url);
+    const bob = await connectClient(t, url);
+    const bobId = 'client-bob-123456';
+
+    const aliceMatched = waitForEvent(alice, 'matched');
+    const bobMatched = waitForEvent(bob, 'matched');
+    login(alice, { username: 'Alice', interests: 'music', clientId: 'client-alice-12345' });
+    login(bob, { username: 'Bob', interests: 'music', clientId: bobId });
+    await Promise.all([aliceMatched, bobMatched]);
+
+    const bobBanned = waitForEvent(bob, 'app_error');
+    for (let index = 0; index < 3; index++) {
+        const received = waitForEvent(alice, 'report_received');
+        alice.emit('reportPartner', { reason: 'Spam or scam' });
+        await received;
+    }
+    assert.equal((await bobBanned).code, 'banned');
+
+    const bobReturning = await connectClient(t, url);
+    const rejected = waitForEvent(bobReturning, 'app_error');
+    login(bobReturning, { username: 'Bob', interests: 'music', clientId: bobId });
+    assert.equal((await rejected).code, 'banned');
+});
+
+test('exposes runtime metrics on the health endpoint', async t => {
+    const url = await createTestServer(t);
+    const response = await fetch(`${url}/health`);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+
+    const data = await response.json();
+    assert.equal(data.status, 'ok');
+    for (const field of ['uptimeSeconds', 'online', 'waiting', 'totalMatches', 'activeBans']) {
+        assert.equal(typeof data[field], 'number', `${field} should be a number`);
+    }
+});
+
+test('persists auto-bans across server restarts', async t => {
+    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'anon-chat-ban-'));
+    t.after(() => fs.rm(dataDir, { recursive: true, force: true }));
+    const silentLogger = { info() {}, error() {}, warn() {} };
+    const bobId = 'client-bob-123456';
+
+    async function startServer() {
+        const chat = createChatServer({ logger: silentLogger, dataDir });
+        await new Promise((resolve, reject) => {
+            chat.server.once('error', reject);
+            chat.server.listen(0, '127.0.0.1', resolve);
+        });
+        return { chat, url: `http://127.0.0.1:${chat.server.address().port}` };
+    }
+
+    async function waitFor(predicate, timeoutMs = 1_500) {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+            if (await predicate()) return;
+            await new Promise(resolve => setTimeout(resolve, 25));
+        }
+        throw new Error('Timed out waiting for condition');
+    }
+
+    // First server: get Bob auto-banned, then confirm the ban was written to disk.
+    const first = await startServer();
+    const alice = await connectClient(t, first.url);
+    const bob = await connectClient(t, first.url);
+    const aliceMatched = waitForEvent(alice, 'matched');
+    const bobMatched = waitForEvent(bob, 'matched');
+    login(alice, { username: 'Alice', interests: 'music', clientId: 'client-alice-12345' });
+    login(bob, { username: 'Bob', interests: 'music', clientId: bobId });
+    await Promise.all([aliceMatched, bobMatched]);
+
+    for (let index = 0; index < 3; index++) {
+        const received = waitForEvent(alice, 'report_received');
+        alice.emit('reportPartner', { reason: 'Spam or scam' });
+        await received;
+    }
+
+    const bansFile = path.join(dataDir, 'bans.json');
+    await waitFor(async () => {
+        try {
+            return (await fs.readFile(bansFile, 'utf8')).includes(bobId);
+        } catch {
+            return false;
+        }
+    });
+    await first.chat.close();
+
+    // Second server reloads the ban from disk and rejects Bob's login.
+    const second = await startServer();
+    t.after(() => second.chat.close());
+    // Wait until the ban has been loaded from disk before attempting to log in.
+    await waitFor(async () => {
+        try {
+            const metrics = await (await fetch(`${second.url}/health`)).json();
+            return metrics.activeBans >= 1;
+        } catch {
+            return false;
+        }
+    });
+    const bobReturning = await connectClient(t, second.url);
+    const rejected = waitForEvent(bobReturning, 'app_error');
+    login(bobReturning, { username: 'Bob', interests: 'music', clientId: bobId });
+    assert.equal((await rejected).code, 'banned');
 });

@@ -20,5 +20,9 @@
   },
   "devDependencies": {
     "socket.io-client": "^4.8.3"
+  },
+  "optionalDependencies": {
+    "@socket.io/redis-adapter": "^8.3.0",
+    "redis": "^6.0.1"
   }
 }
