@@ -14,6 +14,10 @@ and the project follows [Semantic Versioning](https://semver.org/).
   `PROFANITY_FILE` (a JSON array), both additive to the built-in defaults.
 - Coarse in-process per-IP rate limiting for HTTP requests (health checks exempt) and new
   socket connections, with `TRUST_PROXY` support for correct client IPs behind a proxy.
+- Cluster-wide matchmaking when `REDIS_URL` is set: the waiting queue and room registry are
+  shared in Redis and matches are orchestrated across instances, so sticky sessions are no
+  longer required for matching. `/health` counts are aggregated across the cluster.
+- A `docker-compose.yml` stack (two app instances + Redis) for verifying the shared queue.
 
 ### Changed
 

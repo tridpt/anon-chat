@@ -1,0 +1,42 @@
+# Multi-instance verification stack for the shared Redis matchmaking queue.
+#
+# Two app instances share one Redis. Because the waiting queue and room state live in Redis,
+# a visitor on instance 1 can be matched with a visitor on instance 2 with no sticky sessions.
+#
+# Verify:
+#   docker compose up --build
+#   open http://localhost:3000 in one browser and http://localhost:3001 in another,
+#   join with a shared interest, and confirm the two are matched and can chat.
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  app1:
+    build: .
+    environment:
+      PORT: 3000
+      REDIS_URL: redis://redis:6379
+      # ADMIN_TOKEN: set-a-strong-secret-to-enable-/admin
+    ports:
+      - '3000:3000'
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  app2:
+    build: .
+    environment:
+      PORT: 3000
+      REDIS_URL: redis://redis:6379
+    ports:
+      - '3001:3000'
+    depends_on:
+      redis:
+        condition: service_healthy

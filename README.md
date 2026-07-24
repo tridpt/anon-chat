@@ -84,7 +84,19 @@ The app also applies a coarse in-process per-IP rate limit to HTTP requests (the
 
 Set `REDIS_URL` to attach the [Socket.IO Redis adapter](https://socket.io/docs/v4/redis-adapter/), which delivers events across instances. The `redis` and `@socket.io/redis-adapter` packages are listed as optional dependencies and are loaded only when `REDIS_URL` is set; if the connection fails at startup, the app logs the error and continues in single-instance mode.
 
-Note one current limitation: the matchmaking queue, partner relationships, bans, and online counts are still kept in each instance's memory. With several instances behind a load balancer you should therefore enable **sticky sessions** so a visitor stays on one instance for the duration of their session. In that setup each instance matches visitors within its own connected pool. Matching across the entire pool (a shared queue in Redis) and cross-instance partner state are a larger follow-up that builds on this adapter.
+When `REDIS_URL` is set, matchmaking also becomes **cluster-wide**: the waiting queue and room registry live in Redis, a short-lived Redis lock ensures only one instance runs a matching pass at a time, and matches plus partner-left events are orchestrated across instances via `serverSideEmit`. This means any instance can pair any waiting visitor, so **sticky sessions are not required for matching** — a visitor on instance A can be matched and chat with a visitor on instance B. Online and waiting counts on `/health` are aggregated across the cluster, and total matches are tracked in a shared counter.
+
+Bans and per-socket rate limits remain per-instance (a reported client is auto-suspended on the instance that processed the report and on re-login checks); replicating those across the cluster is a possible follow-up.
+
+You can verify the shared queue locally with the bundled Compose stack (two app instances plus Redis):
+
+```bash
+docker compose up --build
+```
+
+Open `http://localhost:3000` in one browser and `http://localhost:3001` in another, join with a shared interest, and confirm the two are matched across instances.
+
+> Note: the single-instance (in-memory) path is covered by the automated test suite. The distributed path relies on a live Redis and multiple instances, so smoke-test it with the Compose stack (or your staging environment) before relying on it in production.
 
 ## Deploy with Docker
 

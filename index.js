@@ -136,11 +136,13 @@ function isPlainObject(value) {
 }
 
 function cleanText(value) {
-  // eslint-disable-next-line no-control-regex -- intentionally strip ASCII control characters
-  return value
-    .replace(/[\u0000-\u001F\u007F]/g, '')
-    .trim()
-    .replace(/\s+/g, ' ');
+  return (
+    value
+      // eslint-disable-next-line no-control-regex -- intentionally strip ASCII control characters
+      .replace(/[\u0000-\u001F\u007F]/g, '')
+      .trim()
+      .replace(/\s+/g, ' ')
+  );
 }
 
 function isClientId(value) {
@@ -300,6 +302,7 @@ async function setupRedisAdapter(io, redisUrl, logger) {
 
   let pubClient;
   let subClient;
+  let cmdClient;
   try {
     const { createClient } = require('redis');
     const { createAdapter } = require('@socket.io/redis-adapter');
@@ -307,16 +310,20 @@ async function setupRedisAdapter(io, redisUrl, logger) {
       retries >= 3 ? new Error('Redis unavailable') : Math.min((retries + 1) * 150, 600);
     pubClient = createClient({ url: redisUrl, socket: { reconnectStrategy } });
     subClient = pubClient.duplicate();
+    // A dedicated client for regular commands (queue/room state). The adapter's pub/sub
+    // clients are reserved for event delivery, so shared-queue commands never contend with them.
+    cmdClient = pubClient.duplicate();
     const onError = (error) => logger.error?.(error);
     pubClient.on('error', onError);
     subClient.on('error', onError);
-    await Promise.all([pubClient.connect(), subClient.connect()]);
+    cmdClient.on('error', onError);
+    await Promise.all([pubClient.connect(), subClient.connect(), cmdClient.connect()]);
     io.adapter(createAdapter(pubClient, subClient));
-    return { pubClient, subClient };
+    return { pubClient, subClient, cmdClient };
   } catch (error) {
     logger.error?.(error);
     // Stop background reconnection attempts when Redis is unreachable at startup.
-    for (const client of [pubClient, subClient]) {
+    for (const client of [pubClient, subClient, cmdClient]) {
       try {
         client?.destroy?.();
       } catch {
@@ -485,6 +492,23 @@ function createChatServer({
   const recentReportsByClient = new Map();
   const bannedClients = new Map();
 
+  // --- Shared (distributed) matchmaking state ---------------------------------------------
+  // Opt-in: active only once a Redis command client connects (REDIS_URL set). While inactive,
+  // every path below falls back to the in-memory queue, so single-instance behaviour and the
+  // test suite are unchanged. In distributed mode the waiting pool and room registry live in
+  // Redis, and matches are orchestrated across instances via serverSideEmit, so any instance
+  // can pair any waiting visitor without sticky sessions.
+  const REDIS_KEYS = {
+    queue: 'anon:mm:queue', // HASH: socketId -> entry JSON
+    lock: 'anon:mm:lock', // string: single-matcher lock (SET NX PX)
+    totalMatches: 'anon:mm:totalMatches', // integer counter
+    room: (roomId) => `anon:mm:room:${roomId}`, // JSON: [member, member]
+  };
+  const ROOM_TTL_SECONDS = 24 * 60 * 60;
+  const MATCH_LOCK_MS = 2000;
+  let redisCmd = null;
+  const distributedEnabled = () => redisCmd !== null;
+
   function isClientBanned(clientId, now = Date.now()) {
     const banUntil = bannedClients.get(clientId);
     if (banUntil === undefined) return false;
@@ -608,14 +632,27 @@ function createChatServer({
     next();
   });
   app.use(express.json({ limit: '5kb' }));
-  app.get('/health', (request, response) => {
+  app.get('/health', async (request, response) => {
     response.set('Cache-Control', 'no-store');
+    let online = io.engine.clientsCount;
+    let waiting = waitingQueue.length;
+    let matches = totalMatches;
+    if (distributedEnabled()) {
+      try {
+        const counts = await dGetCounts();
+        online = counts.online;
+        waiting = counts.waiting;
+        matches = counts.totalMatches;
+      } catch (error) {
+        logError(error);
+      }
+    }
     response.json({
       status: 'ok',
       uptimeSeconds: Math.round(process.uptime()),
-      online: io.engine.clientsCount,
-      waiting: waitingQueue.length,
-      totalMatches,
+      online,
+      waiting,
+      totalMatches: matches,
       averageMatchWaitMs: averageMatchWaitMs === null ? null : Math.round(averageMatchWaitMs),
       activeBans: bannedClients.size,
     });
@@ -688,8 +725,12 @@ function createChatServer({
   }
 
   function removeFromQueue(socket) {
-    waitingQueue = waitingQueue.filter((queuedSocket) => queuedSocket.id !== socket.id);
     socket.isQueued = false;
+    if (distributedEnabled()) {
+      redisCmd.hDel(REDIS_KEYS.queue, socket.id).catch(logError);
+      return;
+    }
+    waitingQueue = waitingQueue.filter((queuedSocket) => queuedSocket.id !== socket.id);
   }
 
   function getQueueStatus() {
@@ -705,6 +746,10 @@ function createChatServer({
   }
 
   function broadcastQueueStatus() {
+    if (distributedEnabled()) {
+      dBroadcastQueueStatus().catch(logError);
+      return;
+    }
     io.emit('queue_status', getQueueStatus());
   }
 
@@ -719,6 +764,11 @@ function createChatServer({
   function enqueue(socket) {
     if (socket.disconnected || socket.currentRoom) return false;
     if (socket.isQueued) return true;
+
+    if (distributedEnabled()) {
+      dEnqueue(socket).catch(logError);
+      return true;
+    }
 
     if (waitingQueue.length >= LIMITS.maxQueueSize) {
       sendError(socket, 'queue_full', 'The chat is busy right now. Please try again shortly.');
@@ -798,6 +848,11 @@ function createChatServer({
   }
 
   function matchUsers() {
+    if (distributedEnabled()) {
+      dMatch().catch(logError);
+      return false;
+    }
+
     let queueChanged = false;
     const queueLengthBeforeCleanup = waitingQueue.length;
     waitingQueue = waitingQueue.filter((socket) => {
@@ -837,6 +892,18 @@ function createChatServer({
       user2.currentRoom = roomId;
       user1.partner = user2;
       user2.partner = user1;
+      user1.partnerInfo = {
+        clientId: user2.clientId,
+        username: user2.username,
+        color: user2.color,
+        language: user2.language,
+      };
+      user2.partnerInfo = {
+        clientId: user1.clientId,
+        username: user1.username,
+        color: user1.color,
+        language: user1.language,
+      };
 
       const sharedInterests = user1.interests.filter((interest) =>
         user2.interests.includes(interest),
@@ -866,6 +933,8 @@ function createChatServer({
   }
 
   function handleLeaveRoom(socket) {
+    if (distributedEnabled()) return dHandleLeaveRoom(socket);
+
     if (!socket.currentRoom) return;
 
     const roomId = socket.currentRoom;
@@ -873,13 +942,218 @@ function createChatServer({
     socket.leave(roomId);
     socket.currentRoom = null;
     socket.partner = null;
+    socket.partnerInfo = null;
 
     if (partner && !partner.disconnected && partner.currentRoom === roomId) {
       partner.leave(roomId);
       partner.currentRoom = null;
       partner.partner = null;
+      partner.partnerInfo = null;
       partner.emit('partner_left');
     }
+  }
+
+  // --- Distributed matchmaking implementation ---------------------------------------------
+  function entryFromSocket(socket) {
+    return {
+      socketId: socket.id,
+      clientId: socket.clientId,
+      username: socket.username,
+      color: socket.color,
+      language: socket.language,
+      interests: socket.interests,
+      blockedClientIds: [...socket.blockedClientIds],
+      joinTime: Date.now(),
+    };
+  }
+
+  async function dEnqueue(socket) {
+    const size = await redisCmd.hLen(REDIS_KEYS.queue);
+    if (size >= LIMITS.maxQueueSize) {
+      sendError(socket, 'queue_full', 'The chat is busy right now. Please try again shortly.');
+      socket.isQueued = false;
+      return;
+    }
+    socket.joinTime = Date.now();
+    socket.isQueued = true;
+    await redisCmd.hSet(REDIS_KEYS.queue, socket.id, JSON.stringify(entryFromSocket(socket)));
+    socket.emit('queued');
+    await dMatch();
+  }
+
+  function dCanMatch(a, b) {
+    return (
+      a.clientId !== b.clientId &&
+      !a.blockedClientIds.includes(b.clientId) &&
+      !b.blockedClientIds.includes(a.clientId)
+    );
+  }
+
+  function dCompatibleLanguage(a, b) {
+    return a.language === 'any' || b.language === 'any' || a.language === b.language;
+  }
+
+  // Mirror of the in-memory getBestMatchIndex tiers, operating on plain queue entries and
+  // skipping anyone already paired in this pass.
+  function dBestMatchIndex(a, entries, start, matched, now) {
+    const shares = (b) => a.interests.some((interest) => b.interests.includes(interest));
+    const aWaited = now - a.joinTime >= LIMITS.fallbackMatchMs;
+
+    const tiers = [
+      (b) => dCanMatch(a, b) && shares(b) && dCompatibleLanguage(a, b),
+      (b) => dCanMatch(a, b) && shares(b),
+      (b) =>
+        dCanMatch(a, b) &&
+        dCompatibleLanguage(a, b) &&
+        (aWaited || now - b.joinTime >= LIMITS.fallbackMatchMs),
+      (b) => dCanMatch(a, b) && (aWaited || now - b.joinTime >= LIMITS.fallbackMatchMs),
+    ];
+
+    for (const accept of tiers) {
+      for (let i = start; i < entries.length; i++) {
+        if (matched.has(entries[i].socketId)) continue;
+        if (accept(entries[i])) return i;
+      }
+    }
+    return -1;
+  }
+
+  // Run one matching pass over the shared queue. A short-lived Redis lock ensures only one
+  // instance matches at a time, so a pair is never claimed twice across the cluster.
+  async function dMatch() {
+    const token = crypto.randomUUID();
+    const acquired = await redisCmd.set(REDIS_KEYS.lock, token, { NX: true, PX: MATCH_LOCK_MS });
+    if (!acquired) return;
+
+    let changed = false;
+    try {
+      const raw = await redisCmd.hGetAll(REDIS_KEYS.queue);
+      const entries = [];
+      for (const value of Object.values(raw)) {
+        try {
+          entries.push(JSON.parse(value));
+        } catch {
+          // Skip a corrupt entry rather than aborting the whole pass.
+        }
+      }
+      entries.sort((x, y) => x.joinTime - y.joinTime);
+
+      const now = Date.now();
+      const matched = new Set();
+
+      for (let i = 0; i < entries.length; i++) {
+        const a = entries[i];
+        if (matched.has(a.socketId)) continue;
+        const j = dBestMatchIndex(a, entries, i + 1, matched, now);
+        if (j === -1) continue;
+
+        const b = entries[j];
+        matched.add(a.socketId);
+        matched.add(b.socketId);
+        await redisCmd.hDel(REDIS_KEYS.queue, [a.socketId, b.socketId]);
+
+        const roomId = crypto.randomUUID();
+        const members = [a, b];
+        await redisCmd.set(REDIS_KEYS.room(roomId), JSON.stringify(members), {
+          EX: ROOM_TTL_SECONDS,
+        });
+        await redisCmd.incr(REDIS_KEYS.totalMatches);
+        changed = true;
+
+        const payload = { roomId, members };
+        applyMatchAssignment(payload); // sockets owned by this instance
+        io.serverSideEmit('anon:mm:match', payload); // sockets owned by other instances
+        log(`Matched ${a.username} and ${b.username} in room ${roomId} (distributed).`);
+      }
+    } finally {
+      try {
+        const current = await redisCmd.get(REDIS_KEYS.lock);
+        if (current === token) await redisCmd.del(REDIS_KEYS.lock);
+      } catch (error) {
+        logError(error);
+      }
+      if (changed) await dBroadcastQueueStatus();
+    }
+  }
+
+  // Apply a match to whichever of the two members is connected to THIS instance.
+  function applyMatchAssignment({ roomId, members }) {
+    for (const member of members) {
+      const socket = io.sockets.sockets.get(member.socketId);
+      if (!socket) continue; // owned by another instance
+      const partner = members.find((m) => m.socketId !== member.socketId);
+      socket.join(roomId);
+      socket.currentRoom = roomId;
+      socket.isQueued = false;
+      socket.partnerInfo = {
+        clientId: partner.clientId,
+        username: partner.username,
+        color: partner.color,
+        language: partner.language,
+      };
+      const sharedInterests = member.interests.filter((interest) =>
+        partner.interests.includes(interest),
+      );
+      socket.emit('matched', {
+        partnerName: partner.username,
+        partnerColor: partner.color,
+        partnerId: partner.clientId,
+        partnerLanguage: partner.language,
+        sharedInterests,
+      });
+    }
+  }
+
+  // Clean up and notify the partner of a room on THIS instance (idempotent; the partner lives
+  // on exactly one instance). Called locally and via the serverSideEmit control channel.
+  function notifyPartnerLeft(roomId, leaverSocketId) {
+    for (const socket of io.sockets.sockets.values()) {
+      if (socket.currentRoom === roomId && socket.id !== leaverSocketId) {
+        socket.leave(roomId);
+        socket.currentRoom = null;
+        socket.partnerInfo = null;
+        socket.emit('partner_left');
+      }
+    }
+  }
+
+  function dHandleLeaveRoom(socket) {
+    const roomId = socket.currentRoom;
+    if (!roomId) return;
+
+    socket.leave(roomId);
+    socket.currentRoom = null;
+    socket.partnerInfo = null;
+
+    notifyPartnerLeft(roomId, socket.id); // partner may be on this instance
+    io.serverSideEmit('anon:mm:leave', { roomId, leaverSocketId: socket.id }); // or another
+    redisCmd.del(REDIS_KEYS.room(roomId)).catch(logError);
+  }
+
+  async function dGetCounts() {
+    const [waiting, totalRaw, socketIds] = await Promise.all([
+      redisCmd.hLen(REDIS_KEYS.queue),
+      redisCmd.get(REDIS_KEYS.totalMatches),
+      io.of('/').adapter.sockets(new Set()),
+    ]);
+    return {
+      waiting,
+      online: socketIds.size,
+      totalMatches: Number.parseInt(totalRaw ?? '0', 10) || 0,
+    };
+  }
+
+  async function dBroadcastQueueStatus() {
+    const counts = await dGetCounts();
+    const estimatedWaitSeconds =
+      averageMatchWaitMs === null
+        ? null
+        : Math.max(5, Math.min(120, Math.round(averageMatchWaitMs / 5_000) * 5));
+    io.emit('queue_status', {
+      waitingCount: counts.waiting,
+      estimatedWaitSeconds,
+      onlineCount: counts.online,
+    });
   }
 
   function safelyHandle(socket, handler) {
@@ -902,6 +1176,24 @@ function createChatServer({
       return;
     }
     next();
+  });
+
+  // Cross-instance control channel (delivered via the Redis adapter's serverSideEmit). Each
+  // instance acts only on the sockets it owns, so match assignments and partner-left cleanups
+  // reach visitors regardless of which instance they connected to.
+  io.on('anon:mm:match', (payload) => {
+    try {
+      applyMatchAssignment(payload);
+    } catch (error) {
+      logError(error);
+    }
+  });
+  io.on('anon:mm:leave', ({ roomId, leaverSocketId }) => {
+    try {
+      notifyPartnerLeft(roomId, leaverSocketId);
+    } catch (error) {
+      logError(error);
+    }
   });
 
   io.on('connection', (socket) => {
@@ -1044,7 +1336,7 @@ function createChatServer({
     socket.on(
       'blockPartner',
       safelyHandle(socket, () => {
-        if (!socket.currentRoom || !socket.partner) {
+        if (!socket.currentRoom || !socket.partnerInfo) {
           sendError(socket, 'invalid_state', 'You can only block someone while you are chatting.');
           return;
         }
@@ -1054,7 +1346,7 @@ function createChatServer({
           return;
         }
 
-        const partner = socket.partner;
+        const partner = socket.partnerInfo;
         socket.blockedClientIds.add(partner.clientId);
         socket.emit('partner_blocked', {
           partnerName: partner.username,
@@ -1069,7 +1361,7 @@ function createChatServer({
     socket.on(
       'reportPartner',
       safelyHandle(socket, async (data) => {
-        if (!socket.currentRoom || !socket.partner) {
+        if (!socket.currentRoom || !socket.partnerInfo) {
           sendError(socket, 'invalid_state', 'You can only report someone while you are chatting.');
           return;
         }
@@ -1089,7 +1381,7 @@ function createChatServer({
           return;
         }
 
-        const partner = socket.partner;
+        const partner = socket.partnerInfo;
         const report = await reportStore.append({
           id: crypto.randomUUID(),
           createdAt: new Date().toISOString(),
@@ -1133,7 +1425,9 @@ function createChatServer({
     .then((clients) => {
       if (clients) {
         redisClients = clients;
+        redisCmd = clients.cmdClient;
         log('Redis adapter enabled for multi-instance event delivery.');
+        log('Distributed matchmaking enabled: waiting queue and rooms are shared via Redis.');
       }
     })
     .catch(logError);
@@ -1153,7 +1447,11 @@ function createChatServer({
         io.close(async (error) => {
           try {
             if (redisClients) {
-              await Promise.all([redisClients.pubClient.quit(), redisClients.subClient.quit()]);
+              await Promise.all([
+                redisClients.pubClient.quit(),
+                redisClients.subClient.quit(),
+                redisClients.cmdClient.quit(),
+              ]);
             }
           } catch (closeError) {
             logError(closeError);
