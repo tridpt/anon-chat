@@ -9,6 +9,10 @@ and the project follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 - A cancel button on the waiting screen to leave the queue and return to login.
+- Runtime-configurable profanity list via `PROFANITY_EXTRA` (comma-separated words) and
+  `PROFANITY_FILE` (a JSON array), both additive to the built-in defaults.
+- Coarse in-process per-IP rate limiting for HTTP requests (health checks exempt) and new
+  socket connections, with `TRUST_PROXY` support for correct client IPs behind a proxy.
 
 ### Changed
 - Compacted the login screen layout and replaced the native language `<select>` with a

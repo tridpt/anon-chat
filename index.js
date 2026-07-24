@@ -4,6 +4,7 @@ const { Server } = require('socket.io');
 const path = require('path');
 const crypto = require('crypto');
 const fs = require('fs/promises');
+const { readFileSync } = require('fs');
 
 const COLORS = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FDCB6E', '#6C5CE7', '#55E6C1', '#D6A2E8', '#FF9FF3'];
 const LIMITS = {
@@ -25,12 +26,18 @@ const LIMITS = {
     blockRate: { max: 5, windowMs: 60_000 },
     reportRate: { max: 3, windowMs: 60 * 60_000 },
     maxLinksPerMessage: 3,
-    autoBan: { reportThreshold: 3, windowMs: 60 * 60_000, banDurationMs: 24 * 60 * 60_000 }
+    autoBan: { reportThreshold: 3, windowMs: 60 * 60_000, banDurationMs: 24 * 60 * 60_000 },
+    // Coarse per-IP limits applied before any per-socket handling, as a lightweight
+    // in-process backstop for abuse. A reverse proxy / WAF should still be the first line
+    // of defence in production.
+    httpRate: { max: 120, windowMs: 60_000 },
+    connectionRate: { max: 40, windowMs: 60_000 }
 };
 
 // Basic profanity list (English + common Vietnamese). Matched words are masked, not blocked,
-// so a single slip does not interrupt the conversation. Extend as needed for your community.
-const PROFANITY = [
+// so a single slip does not interrupt the conversation. The list can be extended at runtime
+// without editing this file: see loadProfanityList below.
+const DEFAULT_PROFANITY = [
     'fuck', 'fucking', 'shit', 'bitch', 'asshole', 'bastard', 'dick', 'cunt', 'slut', 'whore',
     'nigger', 'faggot', 'retard', 'rape',
     'dit me', 'djtme', 'ditme', 'lon', 'cac', 'buoi', 'dcm', 'vcl', 'vl', 'dm', 'dmm', 'cak', 'loz', 'cdm'
@@ -41,10 +48,44 @@ function escapeRegExp(value) {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-const PROFANITY_PATTERN = new RegExp(`\\b(${PROFANITY.map(escapeRegExp).join('|')})\\b`, 'gi');
+function normalizeProfanityWords(words) {
+    return [...new Set(words.map(word => String(word).toLowerCase().trim()).filter(Boolean))];
+}
 
-function maskProfanity(text) {
-    return text.replace(PROFANITY_PATTERN, match => '*'.repeat(match.length));
+// Builds the effective profanity list from the built-in defaults plus optional runtime
+// configuration. `PROFANITY_EXTRA` is a comma-separated list of additional words, and
+// `PROFANITY_FILE` points at a JSON array of words. Both are additive; malformed or missing
+// sources are ignored so the defaults always remain in effect.
+function loadProfanityList(env = process.env, logger = console) {
+    const words = [...DEFAULT_PROFANITY];
+
+    const extra = env.PROFANITY_EXTRA;
+    if (typeof extra === 'string' && extra.trim()) {
+        words.push(...extra.split(','));
+    }
+
+    const file = env.PROFANITY_FILE;
+    if (typeof file === 'string' && file.trim()) {
+        try {
+            const parsed = JSON.parse(readFileSync(file, 'utf8'));
+            if (!Array.isArray(parsed)) throw new Error('Profanity file must contain a JSON array of words.');
+            words.push(...parsed);
+        } catch (error) {
+            logger.error?.(`Could not load PROFANITY_FILE "${file}": ${error.message}. Using defaults.`);
+        }
+    }
+
+    return normalizeProfanityWords(words);
+}
+
+// Returns a function that masks any configured profanity in a message. When the word list is
+// empty the message is returned unchanged, so masking can be fully disabled with an empty file.
+function buildProfanityMasker(words) {
+    const list = normalizeProfanityWords(words);
+    if (list.length === 0) return text => text;
+
+    const pattern = new RegExp(`\\b(${list.map(escapeRegExp).join('|')})\\b`, 'gi');
+    return text => text.replace(pattern, match => '*'.repeat(match.length));
 }
 
 function countLinks(text) {
@@ -160,6 +201,45 @@ function parseReport(data) {
 
 function copyValue(value) {
     return JSON.parse(JSON.stringify(value));
+}
+
+// Simple in-memory sliding-window rate limiter keyed by client IP. Timestamps older than the
+// window are discarded lazily on each check, and idle keys are pruned periodically so memory
+// stays bounded even under churn. Intended as a coarse backstop, not a substitute for an
+// edge/proxy rate limit.
+function createIpRateLimiter({ max, windowMs }) {
+    const hitsByIp = new Map();
+
+    const pruneTimer = setInterval(() => {
+        const now = Date.now();
+        for (const [ip, timestamps] of hitsByIp) {
+            const recent = timestamps.filter(time => now - time < windowMs);
+            if (recent.length === 0) {
+                hitsByIp.delete(ip);
+            } else {
+                hitsByIp.set(ip, recent);
+            }
+        }
+    }, windowMs);
+    pruneTimer.unref?.();
+
+    return {
+        isLimited(ip) {
+            const key = ip || 'unknown';
+            const now = Date.now();
+            const recent = (hitsByIp.get(key) ?? []).filter(time => now - time < windowMs);
+            if (recent.length >= max) {
+                hitsByIp.set(key, recent);
+                return true;
+            }
+            recent.push(now);
+            hitsByIp.set(key, recent);
+            return false;
+        },
+        stop() {
+            clearInterval(pruneTimer);
+        }
+    };
 }
 
 // Optionally enables the Socket.IO Redis adapter so events are delivered across
@@ -296,14 +376,41 @@ function createChatServer({
     logger = console,
     dataDir = process.env.DATA_DIR || path.join(__dirname, 'data'),
     adminToken = process.env.ADMIN_TOKEN,
-    redisUrl = process.env.REDIS_URL
+    redisUrl = process.env.REDIS_URL,
+    profanityWords,
+    trustProxy = process.env.TRUST_PROXY === 'true' || process.env.TRUST_PROXY === '1'
 } = {}) {
+    const maskProfanity = buildProfanityMasker(profanityWords ?? loadProfanityList(process.env, logger));
     const app = express();
+    if (trustProxy) app.set('trust proxy', true);
     const server = http.createServer(app);
     const io = new Server(server, { maxHttpBufferSize: LIMITS.maxPayloadBytes });
     const reportStore = createReportStore(dataDir);
     const banStore = createBanStore(dataDir);
+    const httpRateLimiter = createIpRateLimiter(LIMITS.httpRate);
+    const connectionRateLimiter = createIpRateLimiter(LIMITS.connectionRate);
     let redisClients = null;
+
+    // When trustProxy is enabled, honour the left-most X-Forwarded-For entry set by a trusted
+    // reverse proxy. Otherwise fall back to the direct socket address so a client cannot spoof
+    // its IP by sending its own forwarding header.
+    function firstForwardedIp(forwardedHeader) {
+        if (typeof forwardedHeader !== 'string') return '';
+        return forwardedHeader.split(',')[0].trim();
+    }
+
+    function getRequestIp(request) {
+        if (trustProxy) return request.ip || firstForwardedIp(request.headers['x-forwarded-for']) || request.socket?.remoteAddress || '';
+        return request.socket?.remoteAddress || '';
+    }
+
+    function getSocketIp(socket) {
+        if (trustProxy) {
+            const forwarded = firstForwardedIp(socket.handshake?.headers?.['x-forwarded-for']);
+            if (forwarded) return forwarded;
+        }
+        return socket.handshake?.address || '';
+    }
 
     let waitingQueue = [];
     let averageMatchWaitMs = null;
@@ -412,6 +519,19 @@ function createChatServer({
         next();
     }
 
+    app.use((request, response, next) => {
+        // Keep health checks cheap and unthrottled so uptime monitors are never rate limited.
+        if (request.path === '/health') {
+            next();
+            return;
+        }
+        if (httpRateLimiter.isLimited(getRequestIp(request))) {
+            response.set('Retry-After', String(Math.ceil(LIMITS.httpRate.windowMs / 1000)));
+            response.status(429).json({ error: 'Too many requests. Please slow down.' });
+            return;
+        }
+        next();
+    });
     app.use(express.json({ limit: '5kb' }));
     app.get('/health', (request, response) => {
         response.set('Cache-Control', 'no-store');
@@ -653,6 +773,14 @@ function createChatServer({
         };
     }
 
+    io.use((socket, next) => {
+        if (connectionRateLimiter.isLimited(getSocketIp(socket))) {
+            next(new Error('Too many connection attempts. Please slow down.'));
+            return;
+        }
+        next();
+    });
+
     io.on('connection', socket => {
         socket.color = COLORS[Math.floor(Math.random() * COLORS.length)];
         socket.rateLimits = Object.create(null);
@@ -847,6 +975,8 @@ function createChatServer({
         io,
         close: () => new Promise((resolve, reject) => {
             clearInterval(matchingInterval);
+            httpRateLimiter.stop();
+            connectionRateLimiter.stop();
             io.close(async error => {
                 try {
                     if (redisClients) {
@@ -872,4 +1002,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { createChatServer, LIMITS };
+module.exports = { createChatServer, LIMITS, loadProfanityList, buildProfanityMasker };

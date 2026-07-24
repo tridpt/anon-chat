@@ -53,6 +53,9 @@ npm test
 | `DATA_DIR` | `./data` | Directory where durable report records are stored. |
 | `ADMIN_TOKEN` | _(required for admin)_ | Secret used to protect the moderation dashboard and API. |
 | `REDIS_URL` | _(optional)_ | Enables the Socket.IO Redis adapter for multi-instance deployments (e.g. `redis://localhost:6379`). |
+| `PROFANITY_EXTRA` | _(optional)_ | Comma-separated extra words to mask, added to the built-in list. |
+| `PROFANITY_FILE` | _(optional)_ | Path to a JSON array of extra words to mask. Malformed or missing files are ignored. |
+| `TRUST_PROXY` | `false` | Set to `true`/`1` when behind a trusted reverse proxy so per-IP limits use the `X-Forwarded-For` client IP. |
 
 To enable moderation, set a strong token before starting the app:
 
@@ -71,11 +74,11 @@ The 18+ confirmation is a self-attestation, not identity or age verification. It
 
 Reports are validated, stored in `DATA_DIR/reports.json`, and also written as structured `REPORT {...}` server logs. The `/admin` dashboard can filter reports and mark them reviewed or resolved. Establish a moderation process and protect the `ADMIN_TOKEN`; the app deliberately does not store chat messages.
 
-Profanity masking covers a basic word list and can be extended in `index.js`. Auto-suspension is a lightweight safeguard: when an anonymous client is reported enough times within the configured window, it is temporarily blocked from matching. Active bans are persisted to `DATA_DIR/bans.json` (atomic write) and reloaded on startup, so they survive restarts and redeploys. Expired bans are pruned automatically. This is not a substitute for human moderation.
+Profanity masking covers a basic built-in word list. Extend it at runtime without editing code by setting `PROFANITY_EXTRA` (comma-separated words) and/or `PROFANITY_FILE` (a JSON array of words); both are additive to the defaults. Auto-suspension is a lightweight safeguard: when an anonymous client is reported enough times within the configured window, it is temporarily blocked from matching. Active bans are persisted to `DATA_DIR/bans.json` (atomic write) and reloaded on startup, so they survive restarts and redeploys. Expired bans are pruned automatically. This is not a substitute for human moderation.
 
 A public `GET /health` endpoint reports `status`, uptime, current online and waiting counts, total matches, the rolling average match wait, and the number of active bans. Use it for uptime checks and basic monitoring.
 
-For a production release, also put the app behind HTTPS, add a reverse-proxy/IP-level rate limit, publish a privacy policy, and monitor error and report logs.
+The app also applies a coarse in-process per-IP rate limit to HTTP requests (the `/health` endpoint is exempt) and to new socket connections, as a lightweight backstop against abuse. This is not a replacement for an edge/proxy limit. For a production release, also put the app behind HTTPS, add a reverse-proxy/IP-level rate limit as the first line of defence, set `TRUST_PROXY=true` so the in-process limiter sees real client IPs, publish a privacy policy, and monitor error and report logs.
 
 ## Scaling to multiple instances
 
