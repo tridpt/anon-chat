@@ -47,15 +47,15 @@ npm test
 
 ## Configuration
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `PORT` | `3000` | HTTP and Socket.IO port. |
-| `DATA_DIR` | `./data` | Directory where durable report records are stored. |
-| `ADMIN_TOKEN` | _(required for admin)_ | Secret used to protect the moderation dashboard and API. |
-| `REDIS_URL` | _(optional)_ | Enables the Socket.IO Redis adapter for multi-instance deployments (e.g. `redis://localhost:6379`). |
-| `PROFANITY_EXTRA` | _(optional)_ | Comma-separated extra words to mask, added to the built-in list. |
-| `PROFANITY_FILE` | _(optional)_ | Path to a JSON array of extra words to mask. Malformed or missing files are ignored. |
-| `TRUST_PROXY` | `false` | Set to `true`/`1` when behind a trusted reverse proxy so per-IP limits use the `X-Forwarded-For` client IP. |
+| Variable          | Default                | Purpose                                                                                                     |
+| ----------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `PORT`            | `3000`                 | HTTP and Socket.IO port.                                                                                    |
+| `DATA_DIR`        | `./data`               | Directory where durable report records are stored.                                                          |
+| `ADMIN_TOKEN`     | _(required for admin)_ | Secret used to protect the moderation dashboard and API.                                                    |
+| `REDIS_URL`       | _(optional)_           | Enables the Socket.IO Redis adapter for multi-instance deployments (e.g. `redis://localhost:6379`).         |
+| `PROFANITY_EXTRA` | _(optional)_           | Comma-separated extra words to mask, added to the built-in list.                                            |
+| `PROFANITY_FILE`  | _(optional)_           | Path to a JSON array of extra words to mask. Malformed or missing files are ignored.                        |
+| `TRUST_PROXY`     | `false`                | Set to `true`/`1` when behind a trusted reverse proxy so per-IP limits use the `X-Forwarded-For` client IP. |
 
 To enable moderation, set a strong token before starting the app:
 

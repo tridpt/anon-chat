@@ -9,6 +9,7 @@ request, or discussion for a vulnerability.
 - Contact the maintainer directly through their GitHub profile.
 
 Please include:
+
 - A description of the issue and its impact.
 - Steps to reproduce or a proof of concept.
 - Affected version or commit.

@@ -8,6 +8,7 @@ and the project follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+
 - A cancel button on the waiting screen to leave the queue and return to login.
 - Runtime-configurable profanity list via `PROFANITY_EXTRA` (comma-separated words) and
   `PROFANITY_FILE` (a JSON array), both additive to the built-in defaults.
@@ -15,6 +16,7 @@ and the project follows [Semantic Versioning](https://semver.org/).
   socket connections, with `TRUST_PROXY` support for correct client IPs behind a proxy.
 
 ### Changed
+
 - Compacted the login screen layout and replaced the native language `<select>` with a
   custom, theme-aware dropdown with centered options.
 - Interest chips now insert the localized (translated) label.
@@ -22,6 +24,7 @@ and the project follows [Semantic Versioning](https://semver.org/).
 - Reduced the no-match fallback pairing time from 10s to 5s.
 
 ### Fixed
+
 - Emoji picker and reaction panels not closing because a CSS `display` value overrode
   the `hidden` attribute.
 - Centered the blocked-people and report modal dialogs (were pinned to the top-left).
@@ -30,6 +33,7 @@ and the project follows [Semantic Versioning](https://semver.org/).
 ## [1.1.0] - 2026-06-26
 
 ### Added
+
 - Emoji picker in the message composer and per-message emoji reactions.
 - Dark/light interface theme toggle, saved per browser.
 - Full English/Vietnamese interface internationalisation with a language switcher.
@@ -49,6 +53,7 @@ and the project follows [Semantic Versioning](https://semver.org/).
 ## [1.0.0]
 
 ### Added
+
 - Anonymous one-on-one matchmaking by shared interests and language preference.
 - Real-time chat with typing indicators and localized icebreaker prompts.
 - Live queue status with waiting count and estimated wait time.

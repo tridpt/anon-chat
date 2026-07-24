@@ -18,19 +18,19 @@ Mỗi khách truy cập được gán một `clientId` ngẫu nhiên lưu trong 
 
 ## 2. Tính năng
 
-| Nhóm | Tính năng |
-| --- | --- |
-| Ghép cặp | Ghép theo sở thích chung, ưu tiên ngôn ngữ tương thích (Việt/Anh/bất kỳ), fallback sau 10 giây chờ |
-| Trò chuyện | Nhắn tin thời gian thực, chỉ báo "đang gõ", âm thanh thông báo |
-| Gợi ý | Câu mở lời (icebreaker) theo sở thích chung và ngôn ngữ |
-| Hàng đợi | Hiển thị số người đang chờ, ước tính thời gian chờ, số người trực tuyến |
-| Cảm xúc | Emoji picker khi soạn tin; thả reaction emoji lên từng tin nhắn |
-| Giao diện | Chuyển dark/light theme; đổi ngôn ngữ giao diện Việt/Anh (i18n) |
-| Thông báo | Thông báo trình duyệt khi được ghép cặp hoặc có tin mới lúc tab ẩn |
-| An toàn | Bỏ qua (skip), chặn (block), bỏ chặn, báo cáo với lý do |
-| Kiểm duyệt | Lọc từ ngữ xấu, giới hạn link, tự động cấm theo số report; trang `/admin` |
-| Vận hành | Endpoint `/health` với số liệu; ban lưu bền vững qua restart |
-| Mở rộng | Redis adapter tùy chọn cho nhiều instance |
+| Nhóm       | Tính năng                                                                                          |
+| ---------- | -------------------------------------------------------------------------------------------------- |
+| Ghép cặp   | Ghép theo sở thích chung, ưu tiên ngôn ngữ tương thích (Việt/Anh/bất kỳ), fallback sau 10 giây chờ |
+| Trò chuyện | Nhắn tin thời gian thực, chỉ báo "đang gõ", âm thanh thông báo                                     |
+| Gợi ý      | Câu mở lời (icebreaker) theo sở thích chung và ngôn ngữ                                            |
+| Hàng đợi   | Hiển thị số người đang chờ, ước tính thời gian chờ, số người trực tuyến                            |
+| Cảm xúc    | Emoji picker khi soạn tin; thả reaction emoji lên từng tin nhắn                                    |
+| Giao diện  | Chuyển dark/light theme; đổi ngôn ngữ giao diện Việt/Anh (i18n)                                    |
+| Thông báo  | Thông báo trình duyệt khi được ghép cặp hoặc có tin mới lúc tab ẩn                                 |
+| An toàn    | Bỏ qua (skip), chặn (block), bỏ chặn, báo cáo với lý do                                            |
+| Kiểm duyệt | Lọc từ ngữ xấu, giới hạn link, tự động cấm theo số report; trang `/admin`                          |
+| Vận hành   | Endpoint `/health` với số liệu; ban lưu bền vững qua restart                                       |
+| Mở rộng    | Redis adapter tùy chọn cho nhiều instance                                                          |
 
 ---
 
@@ -41,7 +41,7 @@ Mỗi khách truy cập được gán một `clientId` ngẫu nhiên lưu trong 
 - **Socket.IO 4** — giao tiếp thời gian thực hai chiều (WebSocket).
 - **socket.io-client** — chỉ dùng cho bộ kiểm thử.
 - **node:test** — bộ kiểm thử tích hợp sẵn của Node, không cần thư viện ngoài.
-- **redis** + **@socket.io/redis-adapter** — *tùy chọn* (optionalDependencies), chỉ nạp khi bật `REDIS_URL`.
+- **redis** + **@socket.io/redis-adapter** — _tùy chọn_ (optionalDependencies), chỉ nạp khi bật `REDIS_URL`.
 - **Frontend** — HTML/CSS/JavaScript thuần (vanilla), không framework. Font Awesome và Google Fonts qua CDN.
 
 ---
@@ -110,28 +110,29 @@ Toàn bộ server nằm trong một file. Hàm trung tâm là `createChatServer(
 
 Đối tượng `LIMITS` tập trung mọi giới hạn để dễ chỉnh:
 
-| Khóa | Giá trị | Ý nghĩa |
-| --- | --- | --- |
-| `maxUsernameLength` | 20 | Độ dài tối đa biệt danh |
-| `maxInterestsInputLength` | 200 | Độ dài tối đa chuỗi sở thích nhập vào |
-| `maxInterestLength` | 30 | Độ dài tối đa một sở thích |
-| `maxInterests` | 10 | Số sở thích tối đa |
-| `maxMessageLength` | 500 | Độ dài tối đa một tin nhắn |
-| `maxReportReasonLength` | 300 | Độ dài tối đa lý do báo cáo |
-| `maxBlockedClientIds` | 100 | Số người chặn tối đa gửi lên |
-| `maxQueueSize` | 1000 | Sức chứa hàng đợi |
-| `maxPayloadBytes` | 10000 | Kích thước payload Socket.IO tối đa |
-| `messageRate` | 8 / 10s | Giới hạn gửi tin nhắn |
-| `typingRate` | 1 / 750ms | Giới hạn sự kiện "đang gõ" |
-| `skipRate` | 5 / 10s | Giới hạn bỏ qua |
-| `reactionRate` | 15 / 10s | Giới hạn thả reaction |
-| `loginRate` | 3 / 60s | Giới hạn đăng nhập |
-| `blockRate` | 5 / 60s | Giới hạn chặn |
-| `reportRate` | 3 / 60 phút | Giới hạn báo cáo |
-| `maxLinksPerMessage` | 3 | Số link tối đa trong một tin nhắn |
-| `autoBan` | ngưỡng 3, cửa sổ 60 phút, cấm 24 giờ | Tham số tự động cấm |
+| Khóa                      | Giá trị                              | Ý nghĩa                               |
+| ------------------------- | ------------------------------------ | ------------------------------------- |
+| `maxUsernameLength`       | 20                                   | Độ dài tối đa biệt danh               |
+| `maxInterestsInputLength` | 200                                  | Độ dài tối đa chuỗi sở thích nhập vào |
+| `maxInterestLength`       | 30                                   | Độ dài tối đa một sở thích            |
+| `maxInterests`            | 10                                   | Số sở thích tối đa                    |
+| `maxMessageLength`        | 500                                  | Độ dài tối đa một tin nhắn            |
+| `maxReportReasonLength`   | 300                                  | Độ dài tối đa lý do báo cáo           |
+| `maxBlockedClientIds`     | 100                                  | Số người chặn tối đa gửi lên          |
+| `maxQueueSize`            | 1000                                 | Sức chứa hàng đợi                     |
+| `maxPayloadBytes`         | 10000                                | Kích thước payload Socket.IO tối đa   |
+| `messageRate`             | 8 / 10s                              | Giới hạn gửi tin nhắn                 |
+| `typingRate`              | 1 / 750ms                            | Giới hạn sự kiện "đang gõ"            |
+| `skipRate`                | 5 / 10s                              | Giới hạn bỏ qua                       |
+| `reactionRate`            | 15 / 10s                             | Giới hạn thả reaction                 |
+| `loginRate`               | 3 / 60s                              | Giới hạn đăng nhập                    |
+| `blockRate`               | 5 / 60s                              | Giới hạn chặn                         |
+| `reportRate`              | 3 / 60 phút                          | Giới hạn báo cáo                      |
+| `maxLinksPerMessage`      | 3                                    | Số link tối đa trong một tin nhắn     |
+| `autoBan`                 | ngưỡng 3, cửa sổ 60 phút, cấm 24 giờ | Tham số tự động cấm                   |
 
 Các tập hợp/hằng khác:
+
 - `COLORS` — bảng màu gán ngẫu nhiên cho mỗi socket (màu hiển thị tên).
 - `REPORT_STATUSES` = `{new, reviewed, resolved}`.
 - `LANGUAGES` = `{any, vi, en}`.
@@ -154,11 +155,13 @@ Các tập hợp/hằng khác:
 ### 6.3. Kho báo cáo — `createReportStore(dataDirectory)`
 
 Quản lý file `data/reports.json` với:
+
 - **Hàng đợi thao tác** (`operationQueue`) — tuần tự hóa mọi thao tác đọc/ghi để tránh race condition.
 - **Ghi nguyên tử (atomic)** — ghi ra file `.tmp` rồi `rename` để tránh hỏng file khi ghi dở.
 - API: `append(report)`, `list(status?)`, `update(id, changes)`. Dữ liệu trả ra luôn được deep-copy (`copyValue`) để không lộ tham chiếu nội bộ.
 
 Mỗi báo cáo có cấu trúc:
+
 ```json
 {
   "id": "uuid",
@@ -175,6 +178,7 @@ Mỗi báo cáo có cấu trúc:
 ### 6.4. Kho cấm — `createBanStore(dataDirectory)`
 
 Quản lý file `data/bans.json`, cùng kỹ thuật atomic write và hàng đợi thao tác:
+
 - `load()` — đọc danh sách cấm, **tự loại bỏ các lệnh cấm đã hết hạn** khi nạp.
 - `save(entries)` — ghi danh sách cấm còn hiệu lực.
 - Mỗi mục: `{ clientId, banUntil }` (timestamp mili-giây hết hạn).
@@ -191,6 +195,7 @@ Quản lý file `data/bans.json`, cùng kỹ thuật atomic write và hàng đ�
 Tham số: `{ logger, dataDir, adminToken, redisUrl }` (mặc định lấy từ biến môi trường).
 
 **Trạng thái trong bộ nhớ:**
+
 - `waitingQueue` — mảng các socket đang chờ ghép.
 - `averageMatchWaitMs` — trung bình trượt thời gian chờ (EMA) để ước tính thời gian chờ.
 - `totalMatches` — tổng số lần ghép (cho `/health`).
@@ -199,15 +204,16 @@ Tham số: `{ logger, dataDir, adminToken, redisUrl }` (mặc định lấy từ
 
 **Các route HTTP:**
 
-| Method | Đường dẫn | Mô tả |
-| --- | --- | --- |
-| GET | `/health` | Công khai. Trả `status`, `uptimeSeconds`, `online`, `waiting`, `totalMatches`, `averageMatchWaitMs`, `activeBans` |
-| GET | `/admin` | Trả trang `admin.html` |
-| GET | `/api/admin/reports` | Yêu cầu admin. Liệt kê báo cáo, lọc theo `?status=` |
-| PATCH | `/api/admin/reports/:id` | Yêu cầu admin. Cập nhật `status` + `moderationNote` |
-| (static) | `/*` | Phục vụ thư mục `public/` |
+| Method   | Đường dẫn                | Mô tả                                                                                                             |
+| -------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| GET      | `/health`                | Công khai. Trả `status`, `uptimeSeconds`, `online`, `waiting`, `totalMatches`, `averageMatchWaitMs`, `activeBans` |
+| GET      | `/admin`                 | Trả trang `admin.html`                                                                                            |
+| GET      | `/api/admin/reports`     | Yêu cầu admin. Liệt kê báo cáo, lọc theo `?status=`                                                               |
+| PATCH    | `/api/admin/reports/:id` | Yêu cầu admin. Cập nhật `status` + `moderationNote`                                                               |
+| (static) | `/*`                     | Phục vụ thư mục `public/`                                                                                         |
 
 **Xác thực admin:**
+
 - `hasAdminAccess(request)` — đọc header `Authorization: Bearer <token>`, so sánh bằng `crypto.timingSafeEqual` (chống tấn công thời gian). Nếu chưa cấu hình `ADMIN_TOKEN` thì admin bị tắt (trả 503).
 - `requireAdmin` — middleware chặn truy cập trái phép (401), đặt `Cache-Control: no-store`.
 - `express.json({ limit: '5kb' })` giới hạn body API.
@@ -217,11 +223,12 @@ Tham số: `{ logger, dataDir, adminToken, redisUrl }` (mặc định lấy từ
 Hàm `matchUsers()` chạy định kỳ mỗi 2 giây (`setInterval`, có `.unref()` để không giữ tiến trình sống) và cả khi có người mới vào hàng đợi.
 
 Các bước:
+
 1. **Dọn hàng đợi** — loại các socket đã ngắt kết nối, không còn ở trạng thái chờ, hoặc đã vào phòng.
 2. **Quét cặp** — với mỗi `user1`, tìm `user2` tốt nhất qua `getBestMatchIndex` theo thứ tự ưu tiên:
-   - (a) Có **sở thích chung** *và* **ngôn ngữ tương thích**.
+   - (a) Có **sở thích chung** _và_ **ngôn ngữ tương thích**.
    - (b) Có sở thích chung (bỏ qua ngôn ngữ).
-   - (c) Ngôn ngữ tương thích *và* một trong hai đã chờ đủ **10 giây**.
+   - (c) Ngôn ngữ tương thích _và_ một trong hai đã chờ đủ **10 giây**.
    - (d) Bất kỳ ai (đã chờ đủ 10 giây) — fallback cuối.
 3. **Điều kiện ghép** (`canMatch`): khác `clientId`, và **không bên nào đã chặn bên kia**.
 4. **Tương thích ngôn ngữ** (`hasCompatibleLanguage`): một trong hai là `any`, hoặc cùng ngôn ngữ.
@@ -256,31 +263,31 @@ Các bước:
 
 ### 7.1. Client → Server
 
-| Sự kiện | Payload | Mô tả |
-| --- | --- | --- |
-| `login` | `{ username, interests, language, safetyAcknowledged, clientId, blockedClientIds }` | Vào hàng đợi sau khi validate |
-| `chatMessage` | `string` | Gửi tin nhắn vào phòng hiện tại |
-| `typing` | — | Báo đang gõ cho đối phương |
-| `stop_typing` | — | Báo dừng gõ |
-| `reactMessage` | `{ messageId, emoji }` | Thả reaction lên một tin nhắn |
-| `skip` | — | Rời người hiện tại, tìm người mới |
-| `blockPartner` | — | Chặn đối phương, tìm người mới |
-| `reportPartner` | `{ reason }` | Báo cáo đối phương |
+| Sự kiện         | Payload                                                                             | Mô tả                             |
+| --------------- | ----------------------------------------------------------------------------------- | --------------------------------- |
+| `login`         | `{ username, interests, language, safetyAcknowledged, clientId, blockedClientIds }` | Vào hàng đợi sau khi validate     |
+| `chatMessage`   | `string`                                                                            | Gửi tin nhắn vào phòng hiện tại   |
+| `typing`        | —                                                                                   | Báo đang gõ cho đối phương        |
+| `stop_typing`   | —                                                                                   | Báo dừng gõ                       |
+| `reactMessage`  | `{ messageId, emoji }`                                                              | Thả reaction lên một tin nhắn     |
+| `skip`          | —                                                                                   | Rời người hiện tại, tìm người mới |
+| `blockPartner`  | —                                                                                   | Chặn đối phương, tìm người mới    |
+| `reportPartner` | `{ reason }`                                                                        | Báo cáo đối phương                |
 
 ### 7.2. Server → Client
 
-| Sự kiện | Payload | Mô tả |
-| --- | --- | --- |
-| `queued` | — | Đã vào hàng đợi |
-| `queue_status` | `{ waitingCount, estimatedWaitSeconds, onlineCount }` | Cập nhật trạng thái hàng đợi |
-| `matched` | `{ partnerName, partnerColor, partnerId, partnerLanguage, sharedInterests }` | Đã ghép cặp |
-| `message` | `{ type, id, username, color, text, timestamp }` | Tin nhắn trong phòng |
-| `typing` / `stop_typing` | — | Chỉ báo gõ của đối phương |
-| `message_reaction` | `{ messageId, emoji, from }` | Reaction mới trên một tin nhắn |
-| `partner_left` | — | Đối phương đã rời |
-| `partner_blocked` | `{ partnerName, partnerId }` | Xác nhận đã chặn |
-| `report_received` | — | Xác nhận đã nhận báo cáo |
-| `app_error` | `{ code, message }` | Lỗi (rate_limited, invalid_*, banned, queue_full, server_error...) |
+| Sự kiện                  | Payload                                                                      | Mô tả                                                               |
+| ------------------------ | ---------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `queued`                 | —                                                                            | Đã vào hàng đợi                                                     |
+| `queue_status`           | `{ waitingCount, estimatedWaitSeconds, onlineCount }`                        | Cập nhật trạng thái hàng đợi                                        |
+| `matched`                | `{ partnerName, partnerColor, partnerId, partnerLanguage, sharedInterests }` | Đã ghép cặp                                                         |
+| `message`                | `{ type, id, username, color, text, timestamp }`                             | Tin nhắn trong phòng                                                |
+| `typing` / `stop_typing` | —                                                                            | Chỉ báo gõ của đối phương                                           |
+| `message_reaction`       | `{ messageId, emoji, from }`                                                 | Reaction mới trên một tin nhắn                                      |
+| `partner_left`           | —                                                                            | Đối phương đã rời                                                   |
+| `partner_blocked`        | `{ partnerName, partnerId }`                                                 | Xác nhận đã chặn                                                    |
+| `report_received`        | —                                                                            | Xác nhận đã nhận báo cáo                                            |
+| `app_error`              | `{ code, message }`                                                          | Lỗi (rate*limited, invalid*\*, banned, queue_full, server_error...) |
 
 ---
 
@@ -289,6 +296,7 @@ Các bước:
 ### 8.1. `index.html`
 
 Một trang đơn (SPA-lite) gồm ba "màn hình" chuyển đổi bằng class `.active`:
+
 - **`#login-screen`** — biệt danh, ngôn ngữ ưu tiên, ô sở thích + các chip gợi ý, khối an toàn (18+ và Quy tắc), nút bắt đầu, nút quản lý người đã chặn.
 - **`#waiting-screen`** — spinner, tiêu đề/mô tả trạng thái, dòng trạng thái hàng đợi.
 - **`#chat-screen`** — header (tên đối phương, trạng thái, sở thích chung, nút Report/Block/Skip), panel icebreaker, khung tin nhắn, chỉ báo gõ, vùng nhập (nút emoji + ô nhập + nút gửi).
@@ -344,18 +352,20 @@ Cờ trạng thái quan trọng: `hasActiveSession`, `isInChat`, `currentPartner
 
 ## 9. Cấu hình (biến môi trường)
 
-| Biến | Mặc định | Mục đích |
-| --- | --- | --- |
-| `PORT` | `3000` | Cổng HTTP và Socket.IO |
-| `DATA_DIR` | `./data` | Thư mục lưu báo cáo và lệnh cấm |
-| `ADMIN_TOKEN` | _(bắt buộc để bật admin)_ | Token bảo vệ trang/API kiểm duyệt |
-| `REDIS_URL` | _(tùy chọn)_ | Bật Redis adapter cho nhiều instance, vd `redis://localhost:6379` |
+| Biến          | Mặc định                  | Mục đích                                                          |
+| ------------- | ------------------------- | ----------------------------------------------------------------- |
+| `PORT`        | `3000`                    | Cổng HTTP và Socket.IO                                            |
+| `DATA_DIR`    | `./data`                  | Thư mục lưu báo cáo và lệnh cấm                                   |
+| `ADMIN_TOKEN` | _(bắt buộc để bật admin)_ | Token bảo vệ trang/API kiểm duyệt                                 |
+| `REDIS_URL`   | _(tùy chọn)_              | Bật Redis adapter cho nhiều instance, vd `redis://localhost:6379` |
 
 Bật kiểm duyệt (PowerShell):
+
 ```powershell
 $env:ADMIN_TOKEN = 'mot-chuoi-bi-mat-dai-va-ngau-nhien'
 npm start
 ```
+
 Mở `http://localhost:3000/admin` và nhập đúng token.
 
 ---
@@ -449,12 +459,14 @@ Khuyến nghị production: HTTPS, rate limit ở tầng proxy/IP, công bố ch
 ## 16. Giới hạn đã biết & hướng phát triển
 
 **Giới hạn hiện tại:**
+
 - Trạng thái matchmaking/online theo từng instance (xem mục 15).
 - Đếm reaction cộng dồn mỗi lần bấm (không "toggle 1 lần/người").
 - Danh sách từ cấm và ngưỡng auto-ban ở mức cơ bản, cần tinh chỉnh theo cộng đồng.
 - Chưa có test cho các tính năng mới.
 
 **Hướng phát triển gợi ý:**
+
 - Centralize hàng đợi matchmaking vào Redis để ghép xuyên instance.
 - Reaction kiểu toggle theo người dùng.
 - Bổ sung test cho reactions, auto-ban, ban bền vững, i18n, `/health`.
