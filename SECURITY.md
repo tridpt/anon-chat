@@ -20,12 +20,17 @@ We aim to acknowledge reports within a few days and will keep you updated on the
 
 This project is an anonymous chat service. A few design points worth knowing:
 
-- The app deliberately **does not store chat messages**.
+- The app stores masked chat transcripts for the configured retention period;
+  treat the data directory as sensitive.
 - The `18+` confirmation is a self-attestation, not identity or age verification.
 - Blocking uses a browser-local random `clientId`; it is a user-safety feature,
   not an account-level ban.
-- The moderation dashboard and API are protected by `ADMIN_TOKEN`. Never commit
-  this token. Run the app behind HTTPS and an IP-level rate limit in production.
+- The moderation dashboard uses `ADMIN_TOKEN` only during sign-in, then protects
+  browser requests with a short-lived, `HttpOnly`, `SameSite=Strict` session
+  cookie. Never commit the token. Run the app behind HTTPS and an IP-level rate
+  limit in production.
+- Existing automation may still use `Authorization: Bearer <ADMIN_TOKEN>`; keep
+  those requests server-to-server and never expose the header in browser code.
 
 ## Supported versions
 

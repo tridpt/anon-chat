@@ -20,6 +20,7 @@ Anonymous, one-on-one chat with language-compatible matching. GhostChat does not
 - Keep resolved reports in a separate archive and apply moderator actions such as a 24-hour chat block or permanent ban.
 - Store masked chat transcripts for admin review, with search, date filters, pagination, JSON/CSV export, deletion, and configurable automatic retention.
 - Organize the moderation dashboard into separate Overview, Reports, Resolved, Bans, Activity, and Chats tabs.
+- Protect browser admin access with short-lived, HttpOnly sessions, same-origin mutation checks, and login throttling.
 - Mask basic profanity, limit links per message, and auto-suspend clients that pass a report threshold.
 - Show a live count of people currently online alongside the queue status.
 - Server-side validation, message-size limits, queue limits, and per-socket flood controls.
@@ -49,17 +50,19 @@ npm test
 
 ## Configuration
 
-| Variable              | Default                | Purpose                                                                                                           |
-| --------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `PORT`                | `3000`                 | HTTP and Socket.IO port.                                                                                          |
-| `DATA_DIR`            | `./data`               | Directory where durable reports, bans, and chat transcripts are stored.                                           |
-| `CHAT_RETENTION_DAYS` | `30`                   | Number of days to retain completed chat transcripts. Set to `0` or a negative value to retain indefinitely.       |
-| `ADMIN_TOKEN`         | _(required for admin)_ | Secret used to protect the moderation dashboard and API.                                                          |
-| `ADMIN_PATH`          | `/admin`               | Secret URL path for the moderation dashboard. Use a random path in production; `/admin` returns 404 when changed. |
-| `REDIS_URL`           | _(optional)_           | Enables the Socket.IO Redis adapter for multi-instance deployments (e.g. `redis://localhost:6379`).               |
-| `PROFANITY_EXTRA`     | _(optional)_           | Comma-separated extra words to mask, added to the built-in list.                                                  |
-| `PROFANITY_FILE`      | _(optional)_           | Path to a JSON array of extra words to mask. Malformed or missing files are ignored.                              |
-| `TRUST_PROXY`         | `false`                | Set to `true`/`1` when behind a trusted reverse proxy so per-IP limits use the `X-Forwarded-For` client IP.       |
+| Variable                  | Default                | Purpose                                                                                                           |
+| ------------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `PORT`                    | `3000`                 | HTTP and Socket.IO port.                                                                                          |
+| `DATA_DIR`                | `./data`               | Directory where durable reports, bans, and chat transcripts are stored.                                           |
+| `CHAT_RETENTION_DAYS`     | `30`                   | Number of days to retain completed chat transcripts. Set to `0` or a negative value to retain indefinitely.       |
+| `ADMIN_TOKEN`             | _(required for admin)_ | Secret used once to sign in to the moderation dashboard and API.                                                  |
+| `ADMIN_SESSION_TTL_HOURS` | `8`                    | Lifetime of the in-memory admin session created after sign-in.                                                    |
+| `ADMIN_COOKIE_SECURE`     | `auto`                 | Force the `Secure` flag on the admin cookie (`true`/`1`); it is automatic for HTTPS and production.               |
+| `ADMIN_PATH`              | `/admin`               | Secret URL path for the moderation dashboard. Use a random path in production; `/admin` returns 404 when changed. |
+| `REDIS_URL`               | _(optional)_           | Enables the Socket.IO Redis adapter for multi-instance deployments (e.g. `redis://localhost:6379`).               |
+| `PROFANITY_EXTRA`         | _(optional)_           | Comma-separated extra words to mask, added to the built-in list.                                                  |
+| `PROFANITY_FILE`          | _(optional)_           | Path to a JSON array of extra words to mask. Malformed or missing files are ignored.                              |
+| `TRUST_PROXY`             | `false`                | Set to `true`/`1` when behind a trusted reverse proxy so per-IP limits use the `X-Forwarded-For` client IP.       |
 
 To enable moderation, set a strong token before starting the app:
 
@@ -70,7 +73,9 @@ npm start
 
 When a local `.env` file exists, the app loads it automatically. Keep `.env` private and do not commit it.
 
-Open the configured `ADMIN_PATH` (for example `http://localhost:3000/admin`) and enter the same token. The token is retained only for that browser session. In production, set a random `ADMIN_PATH` as an additional layer; this path is not a replacement for `ADMIN_TOKEN`.
+Open the configured `ADMIN_PATH` (for example `http://localhost:3000/admin`) and enter the token once. The server exchanges it for a short-lived, `HttpOnly`, `SameSite=Strict` session cookie; the browser console does not store the token or send it on every request. Sessions are held in memory and are invalidated when they expire, the server restarts, or you sign out. In production, set a random `ADMIN_PATH` as an additional layer; this path is not a replacement for `ADMIN_TOKEN`.
+
+The admin API still accepts `Authorization: Bearer <ADMIN_TOKEN>` for existing scripts and automation. Prefer the browser session flow for interactive access, and never put the token in a URL.
 
 ## Safety behaviour and limitations
 
@@ -93,6 +98,10 @@ Set `REDIS_URL` to attach the [Socket.IO Redis adapter](https://socket.io/docs/v
 When `REDIS_URL` is set, matchmaking also becomes **cluster-wide**: the waiting queue and room registry live in Redis, a short-lived Redis lock ensures only one instance runs a matching pass at a time, and matches plus partner-left events are orchestrated across instances via `serverSideEmit`. This means any instance can pair any waiting visitor, so **sticky sessions are not required for matching** — a visitor on instance A can be matched and chat with a visitor on instance B. Online and waiting counts on `/health` are aggregated across the cluster, and total matches are tracked in a shared counter.
 
 Bans and per-socket rate limits remain per-instance (a reported client is auto-suspended on the instance that processed the report and on re-login checks); replicating those across the cluster is a possible follow-up.
+
+Browser admin sessions are also held in process memory. With multiple app instances, route the
+admin console to a single instance (or add a shared session store) so a session remains available
+after load balancing.
 
 You can verify the shared queue locally with the bundled Compose stack (two app instances plus Redis):
 

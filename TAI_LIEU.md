@@ -9,7 +9,7 @@
 **GhostChat** là một ứng dụng web cho phép hai người lạ trò chuyện ẩn danh theo thời gian thực, được ghép cặp dựa trên **sở thích chung** và **ngôn ngữ ưu tiên**. Ứng dụng:
 
 - **Không tạo tài khoản**, không yêu cầu đăng nhập.
-- **Không lưu lịch sử trò chuyện** — tin nhắn chỉ tồn tại trong phiên và được chuyển tiếp giữa hai người, không ghi vào ổ đĩa.
+- **Lưu transcript có kiểm soát** — tin nhắn được che từ nhạy cảm và lưu trong `data/chats.json` để moderator xem, tự dọn theo `CHAT_RETENTION_DAYS`.
 - Có cơ chế an toàn: chặn, báo cáo, lọc từ ngữ xấu, tự động cấm tạm thời, và một trang kiểm duyệt riêng.
 
 Mỗi khách truy cập được gán một `clientId` ngẫu nhiên lưu trong trình duyệt (localStorage). Đây không phải tài khoản — xóa dữ liệu trình duyệt sẽ tạo `clientId` mới. `clientId` chỉ dùng để tránh ghép lại với người đã chặn và để gắn báo cáo/cấm.
@@ -18,19 +18,19 @@ Mỗi khách truy cập được gán một `clientId` ngẫu nhiên lưu trong 
 
 ## 2. Tính năng
 
-| Nhóm       | Tính năng                                                                                          |
-| ---------- | -------------------------------------------------------------------------------------------------- |
-| Ghép cặp   | Ghép theo sở thích chung, ưu tiên ngôn ngữ tương thích (Việt/Anh/bất kỳ), fallback sau 10 giây chờ |
-| Trò chuyện | Nhắn tin thời gian thực, chỉ báo "đang gõ", âm thanh thông báo                                     |
-| Gợi ý      | Câu mở lời (icebreaker) theo sở thích chung và ngôn ngữ                                            |
-| Hàng đợi   | Hiển thị số người đang chờ, ước tính thời gian chờ, số người trực tuyến                            |
-| Cảm xúc    | Emoji picker khi soạn tin; thả reaction emoji lên từng tin nhắn                                    |
-| Giao diện  | Chuyển dark/light theme; đổi ngôn ngữ giao diện Việt/Anh (i18n)                                    |
-| Thông báo  | Thông báo trình duyệt khi được ghép cặp hoặc có tin mới lúc tab ẩn                                 |
-| An toàn    | Bỏ qua (skip), chặn (block), bỏ chặn, báo cáo với lý do                                            |
-| Kiểm duyệt | Lọc từ ngữ xấu, giới hạn link, tự động cấm theo số report; trang `/admin`                          |
-| Vận hành   | Endpoint `/health` với số liệu; ban lưu bền vững qua restart                                       |
-| Mở rộng    | Redis adapter tùy chọn cho nhiều instance                                                          |
+| Nhóm       | Tính năng                                                                                         |
+| ---------- | ------------------------------------------------------------------------------------------------- |
+| Ghép cặp   | Ghép theo sở thích chung, ưu tiên ngôn ngữ tương thích (Việt/Anh/bất kỳ), fallback sau 5 giây chờ |
+| Trò chuyện | Nhắn tin thời gian thực, chỉ báo "đang gõ", âm thanh thông báo                                    |
+| Gợi ý      | Câu mở lời (icebreaker) theo sở thích chung và ngôn ngữ                                           |
+| Hàng đợi   | Hiển thị số người đang chờ, ước tính thời gian chờ, số người trực tuyến                           |
+| Cảm xúc    | Emoji picker khi soạn tin; thả reaction emoji lên từng tin nhắn                                   |
+| Giao diện  | Chuyển dark/light theme; đổi ngôn ngữ giao diện Việt/Anh (i18n)                                   |
+| Thông báo  | Thông báo trình duyệt khi được ghép cặp hoặc có tin mới lúc tab ẩn                                |
+| An toàn    | Bỏ qua (skip), chặn (block), bỏ chặn, báo cáo với lý do                                           |
+| Kiểm duyệt | Lọc từ ngữ xấu, giới hạn link, tự động cấm theo số report; trang `/admin`                         |
+| Vận hành   | Endpoint `/health` với số liệu; ban lưu bền vững qua restart                                      |
+| Mở rộng    | Redis adapter tùy chọn cho nhiều instance                                                         |
 
 ---
 
@@ -58,7 +58,7 @@ anon-chat/
 ├── .gitignore
 ├── README.md                 # Hướng dẫn ngắn (tiếng Anh)
 ├── TAI_LIEU.md               # Tài liệu chi tiết này
-├── data/                     # Dữ liệu bền vững (gitignored): reports.json, bans.json
+├── data/                     # Dữ liệu bền vững (gitignored): reports, bans, chats, audit logs
 ├── public/                   # Tài nguyên frontend tĩnh
 │   ├── index.html            # Giao diện chat chính
 │   ├── script.js             # Logic client
@@ -82,7 +82,7 @@ anon-chat/
  │ script.js    │◄──────► │           ── /health, /api/... │◄────►│ script.js    │
  │ i18n.js      │ Socket  │ Socket.IO ── login, message... │ Sock │ i18n.js      │
  │ localStorage │  .IO    │ Matchmaking loop (2s)          │ .IO  │ localStorage │
- └──────────────┘         │ reportStore / banStore (đĩa)   │      └──────────────┘
+ └──────────────┘         │ report/ban/chat/audit stores   │      └──────────────┘
                           │ (tùy chọn) Redis adapter       │
                           └───────────────────────────────┘
                                         │
@@ -192,7 +192,7 @@ Quản lý file `data/bans.json`, cùng kỹ thuật atomic write và hàng đ�
 
 ### 6.6. `createChatServer` — trạng thái và HTTP
 
-Tham số: `{ logger, dataDir, adminToken, redisUrl }` (mặc định lấy từ biến môi trường).
+Tham số: `{ logger, dataDir, adminToken, adminPath, adminSessionTtlMs, redisUrl }` (mặc định lấy từ biến môi trường).
 
 **Trạng thái trong bộ nhớ:**
 
@@ -207,15 +207,20 @@ Tham số: `{ logger, dataDir, adminToken, redisUrl }` (mặc định lấy từ
 | Method   | Đường dẫn                | Mô tả                                                                                                             |
 | -------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------- |
 | GET      | `/health`                | Công khai. Trả `status`, `uptimeSeconds`, `online`, `waiting`, `totalMatches`, `averageMatchWaitMs`, `activeBans` |
-| GET      | `/admin`                 | Trả trang `admin.html`                                                                                            |
+| GET      | `/admin`                 | Trả 404 nếu `ADMIN_PATH` đã đổi; đường dẫn cấu hình trả trang `admin.html`                                        |
+| POST     | `/api/admin/login`       | Đổi `ADMIN_TOKEN` lấy phiên ngắn hạn qua cookie HttpOnly                                                          |
+| GET      | `/api/admin/session`     | Kiểm tra phiên admin hiện tại                                                                                     |
+| POST     | `/api/admin/logout`      | Thu hồi phiên admin hiện tại                                                                                      |
 | GET      | `/api/admin/reports`     | Yêu cầu admin. Liệt kê báo cáo, lọc theo `?status=`                                                               |
 | PATCH    | `/api/admin/reports/:id` | Yêu cầu admin. Cập nhật `status` + `moderationNote`                                                               |
 | (static) | `/*`                     | Phục vụ thư mục `public/`                                                                                         |
 
 **Xác thực admin:**
 
-- `hasAdminAccess(request)` — đọc header `Authorization: Bearer <token>`, so sánh bằng `crypto.timingSafeEqual` (chống tấn công thời gian). Nếu chưa cấu hình `ADMIN_TOKEN` thì admin bị tắt (trả 503).
-- `requireAdmin` — middleware chặn truy cập trái phép (401), đặt `Cache-Control: no-store`.
+- `POST /api/admin/login` so sánh token bằng `crypto.timingSafeEqual`, sau đó tạo ID phiên ngẫu nhiên trong RAM và gửi cookie `HttpOnly; SameSite=Strict; Path=/api/admin`.
+- `hasAdminAccess(request)` ưu tiên phiên cookie còn hạn; header `Authorization: Bearer <token>` vẫn được hỗ trợ cho script server-to-server.
+- `requireAdmin` chặn truy cập trái phép (401), đặt `Cache-Control: no-store`, và yêu cầu cùng origin cho các request thay đổi dữ liệu.
+- Phiên mặc định sống 8 giờ (`ADMIN_SESSION_TTL_HOURS`), bị thu hồi khi logout hoặc restart server; đăng nhập bị giới hạn theo IP.
 - `express.json({ limit: '5kb' })` giới hạn body API.
 
 ### 6.7. Thuật toán ghép cặp
@@ -228,8 +233,8 @@ Các bước:
 2. **Quét cặp** — với mỗi `user1`, tìm `user2` tốt nhất qua `getBestMatchIndex` theo thứ tự ưu tiên:
    - (a) Có **sở thích chung** _và_ **ngôn ngữ tương thích**.
    - (b) Có sở thích chung (bỏ qua ngôn ngữ).
-   - (c) Ngôn ngữ tương thích _và_ một trong hai đã chờ đủ **10 giây**.
-   - (d) Bất kỳ ai (đã chờ đủ 10 giây) — fallback cuối.
+   - (c) Ngôn ngữ tương thích _và_ một trong hai đã chờ đủ **5 giây**.
+   - (d) Bất kỳ ai (đã chờ đủ 5 giây) — fallback cuối.
 3. **Điều kiện ghép** (`canMatch`): khác `clientId`, và **không bên nào đã chặn bên kia**.
 4. **Tương thích ngôn ngữ** (`hasCompatibleLanguage`): một trong hai là `any`, hoặc cùng ngôn ngữ.
 5. Khi ghép: tạo `roomId` (UUID), cả hai `join(roomId)`, gán `currentRoom` và `partner` cho nhau, phát `matched` kèm `sharedInterests`, tăng `totalMatches`, cập nhật EMA thời gian chờ.
@@ -343,8 +348,8 @@ Cờ trạng thái quan trọng: `hasActiveSession`, `isInChat`, `currentPartner
 
 ### 8.5. Trang kiểm duyệt — `admin.html` / `admin.js`
 
-- Nhập `ADMIN_TOKEN`, lưu trong **sessionStorage** (chỉ phiên trình duyệt).
-- Mọi request đính kèm header `Authorization: Bearer <token>`.
+- Nhập `ADMIN_TOKEN` một lần; trình duyệt không lưu token mà dùng cookie phiên `HttpOnly`.
+- Có nút đăng xuất, tự khôi phục phiên khi tải lại, và tự yêu cầu đăng nhập lại khi phiên hết hạn.
 - Liệt kê báo cáo, lọc theo trạng thái, mỗi báo cáo là một thẻ cho phép đổi `status` và ghi `moderationNote`, lưu qua `PATCH /api/admin/reports/:id`.
 - Trang đặt `noindex, nofollow`.
 
@@ -352,12 +357,14 @@ Cờ trạng thái quan trọng: `hasActiveSession`, `isInChat`, `currentPartner
 
 ## 9. Cấu hình (biến môi trường)
 
-| Biến          | Mặc định                  | Mục đích                                                          |
-| ------------- | ------------------------- | ----------------------------------------------------------------- |
-| `PORT`        | `3000`                    | Cổng HTTP và Socket.IO                                            |
-| `DATA_DIR`    | `./data`                  | Thư mục lưu báo cáo và lệnh cấm                                   |
-| `ADMIN_TOKEN` | _(bắt buộc để bật admin)_ | Token bảo vệ trang/API kiểm duyệt                                 |
-| `REDIS_URL`   | _(tùy chọn)_              | Bật Redis adapter cho nhiều instance, vd `redis://localhost:6379` |
+| Biến                      | Mặc định                  | Mục đích                                                              |
+| ------------------------- | ------------------------- | --------------------------------------------------------------------- |
+| `PORT`                    | `3000`                    | Cổng HTTP và Socket.IO                                                |
+| `DATA_DIR`                | `./data`                  | Thư mục lưu báo cáo và lệnh cấm                                       |
+| `ADMIN_TOKEN`             | _(bắt buộc để bật admin)_ | Token dùng lúc đăng nhập và bảo vệ API kiểm duyệt                     |
+| `ADMIN_SESSION_TTL_HOURS` | `8`                       | Thời gian sống phiên admin trong RAM (giờ)                            |
+| `ADMIN_COOKIE_SECURE`     | `auto`                    | Ép cờ `Secure` cho cookie (`true`/`1`); tự bật trong HTTPS/production |
+| `REDIS_URL`               | _(tùy chọn)_              | Bật Redis adapter cho nhiều instance, vd `redis://localhost:6379`     |
 
 Bật kiểm duyệt (PowerShell):
 
@@ -366,7 +373,7 @@ $env:ADMIN_TOKEN = 'mot-chuoi-bi-mat-dai-va-ngau-nhien'
 npm start
 ```
 
-Mở `http://localhost:3000/admin` và nhập đúng token.
+Mở `http://localhost:3000/admin` và nhập đúng token. Token được đổi thành cookie phiên; không dán token vào URL.
 
 ---
 
@@ -434,7 +441,8 @@ Mount volume tại `/app/data` để báo cáo và lệnh cấm tồn tại qua 
 - **Báo cáo** được validate, lưu `data/reports.json` và ghi log có cấu trúc `REPORT {...}`. Trang `/admin` lọc và đánh dấu đã xem/đã xử lý.
 - **Lọc từ ngữ xấu** che bằng `*` (mở rộng danh sách trong `index.js`). **Giới hạn link** chặn spam.
 - **Tự động cấm**: client bị báo cáo đủ ngưỡng trong cửa sổ thời gian sẽ bị cấm tạm thời; lệnh cấm **lưu xuống đĩa** và nạp lại khi khởi động; lệnh hết hạn tự được dọn. Đây là biện pháp nhẹ, **không thay thế kiểm duyệt thủ công**.
-- Ứng dụng **cố ý không lưu tin nhắn**.
+- Chat được lưu dạng transcript đã che từ nhạy cảm trong `data/chats.json` theo thời hạn cấu hình; thư mục dữ liệu phải được bảo vệ.
+- Phiên admin nằm trong RAM của từng instance. Khi chạy sau load balancer, định tuyến console về một instance hoặc dùng session store dùng chung.
 
 Khuyến nghị production: HTTPS, rate limit ở tầng proxy/IP, công bố chính sách quyền riêng tư, giám sát log lỗi và báo cáo, bảo vệ `ADMIN_TOKEN`.
 
@@ -444,7 +452,9 @@ Khuyến nghị production: HTTPS, rate limit ở tầng proxy/IP, công bố ch
 
 - `data/reports.json` — mảng báo cáo (mới nhất ở đầu).
 - `data/bans.json` — mảng lệnh cấm còn hiệu lực `{ clientId, banUntil }`.
-- Cả hai ghi nguyên tử (`.tmp` + `rename`) và tuần tự hóa qua hàng đợi thao tác. Thư mục `data/` nằm trong `.gitignore`.
+- `data/chats.json` — transcript chat đã che nội dung, tự dọn theo `CHAT_RETENTION_DAYS`.
+- `data/resolved-reports.json` và `data/moderation-log.json` — báo cáo đã xử lý và nhật ký thao tác moderator.
+- Các file ghi nguyên tử (`.tmp` + `rename`) và tuần tự hóa qua hàng đợi thao tác. Thư mục `data/` nằm trong `.gitignore`.
 
 ---
 
@@ -452,7 +462,7 @@ Khuyến nghị production: HTTPS, rate limit ở tầng proxy/IP, công bố ch
 
 Đặt `REDIS_URL` để gắn Socket.IO Redis adapter, giúp **phân phối sự kiện giữa các instance**. Hai gói `redis` và `@socket.io/redis-adapter` là optional, chỉ nạp khi cần; nếu kết nối thất bại lúc khởi động, app log lỗi và chạy chế độ một-instance.
 
-**Giới hạn quan trọng:** hàng đợi ghép cặp, quan hệ đối phương, lệnh cấm và số người online vẫn nằm trong RAM của **từng instance**. Khi chạy nhiều instance sau load balancer, cần bật **sticky sessions** để mỗi khách ở yên một instance suốt phiên — khi đó mỗi instance ghép trong nhóm kết nối của riêng nó. Ghép trên toàn bộ pool (hàng đợi dùng chung trong Redis) và partner state xuyên instance là bước phát triển lớn hơn, xây trên nền adapter này.
+Khi bật `REDIS_URL`, hàng đợi và phòng ghép cặp được chia sẻ qua Redis, nên không cần sticky session cho matchmaking. Lệnh cấm và phiên admin vẫn nằm trong RAM từng instance; với load balancer, định tuyến admin về một instance hoặc dùng kho phiên dùng chung.
 
 ---
 
@@ -460,7 +470,7 @@ Khuyến nghị production: HTTPS, rate limit ở tầng proxy/IP, công bố ch
 
 **Giới hạn hiện tại:**
 
-- Trạng thái matchmaking/online theo từng instance (xem mục 15).
+- Lệnh cấm và phiên admin theo từng instance (xem mục 15).
 - Đếm reaction cộng dồn mỗi lần bấm (không "toggle 1 lần/người").
 - Danh sách từ cấm và ngưỡng auto-ban ở mức cơ bản, cần tinh chỉnh theo cộng đồng.
 - Chưa có test cho các tính năng mới.

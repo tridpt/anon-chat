@@ -53,6 +53,7 @@ const LIMITS = {
   skipRate: { max: 5, windowMs: 10_000 },
   reactionRate: { max: 15, windowMs: 10_000 },
   loginRate: { max: 3, windowMs: 60_000 },
+  adminLoginRate: { max: 5, windowMs: 15 * 60_000 },
   blockRate: { max: 5, windowMs: 60_000 },
   reportRate: { max: 3, windowMs: 60 * 60_000 },
   maxLinksPerMessage: 3,
@@ -151,6 +152,9 @@ function countLinks(text) {
 const REPORT_STATUSES = new Set(['new', 'reviewed', 'resolved']);
 const MODERATION_ACTIONS = new Set(['none', 'chat_block', 'permanent_ban']);
 const CHAT_BLOCK_DURATION_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_ADMIN_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
+const ADMIN_SESSION_COOKIE = 'ghostchat_admin_session';
+const ADMIN_SESSION_COOKIE_PATH = '/api/admin';
 const LANGUAGES = new Set(['any', 'vi', 'en']);
 const REACTION_EMOJIS = new Set(['👍', '❤️', '😂', '😮', '😢', '🔥']);
 
@@ -281,6 +285,32 @@ function copyValue(value) {
 function normalizeAdminPath(value) {
   const candidate = typeof value === 'string' ? value.trim() : '';
   return /^\/[A-Za-z0-9_-]{8,100}$/.test(candidate) ? candidate : '/admin';
+}
+
+function parseAdminSessionTtlHours(value) {
+  const hours = Number.parseFloat(value);
+  return Number.isFinite(hours) && hours > 0
+    ? hours * 60 * 60 * 1000
+    : DEFAULT_ADMIN_SESSION_TTL_MS;
+}
+
+function parseCookies(header) {
+  if (typeof header !== 'string' || !header.trim()) return {};
+
+  const cookies = {};
+  for (const pair of header.split(';')) {
+    const separator = pair.indexOf('=');
+    if (separator <= 0) continue;
+    const name = pair.slice(0, separator).trim();
+    const rawValue = pair.slice(separator + 1).trim();
+    if (!name) continue;
+    try {
+      cookies[name] = decodeURIComponent(rawValue);
+    } catch {
+      cookies[name] = rawValue;
+    }
+  }
+  return cookies;
 }
 
 function parseChatDateFilter(value, endOfDay = false) {
@@ -739,6 +769,7 @@ function createChatServer({
   dataDir = process.env.DATA_DIR || path.join(__dirname, 'data'),
   adminToken = process.env.ADMIN_TOKEN,
   adminPath = process.env.ADMIN_PATH || '/admin',
+  adminSessionTtlMs = parseAdminSessionTtlHours(process.env.ADMIN_SESSION_TTL_HOURS),
   redisUrl = process.env.REDIS_URL,
   profanityWords,
   trustProxy = process.env.TRUST_PROXY === 'true' || process.env.TRUST_PROXY === '1',
@@ -758,6 +789,22 @@ function createChatServer({
   const auditStore = createAuditStore(dataDir);
   const httpRateLimiter = createIpRateLimiter(LIMITS.httpRate);
   const connectionRateLimiter = createIpRateLimiter(LIMITS.connectionRate);
+  const adminLoginRateLimiter = createIpRateLimiter(LIMITS.adminLoginRate);
+  const sessionTtlMs =
+    Number.isFinite(adminSessionTtlMs) && adminSessionTtlMs > 0
+      ? adminSessionTtlMs
+      : DEFAULT_ADMIN_SESSION_TTL_MS;
+  const adminSessions = new Map();
+  const adminSessionCleanup = setInterval(
+    () => {
+      const now = Date.now();
+      for (const [sessionId, session] of adminSessions) {
+        if (session.expiresAt <= now) adminSessions.delete(sessionId);
+      }
+    },
+    Math.min(Math.max(sessionTtlMs, 1_000), 15 * 60_000),
+  );
+  adminSessionCleanup.unref?.();
   let redisClients = null;
 
   // When trustProxy is enabled, honour the left-most X-Forwarded-For entry set by a trusted
@@ -1008,17 +1055,99 @@ function createChatServer({
     }
   }
 
-  function hasAdminAccess(request) {
-    if (!adminToken) return false;
-
-    const authorization = request.get('authorization') || '';
-    const suppliedToken = authorization.startsWith('Bearer ') ? authorization.slice(7) : '';
+  function tokenMatches(suppliedToken) {
+    if (!adminToken || typeof suppliedToken !== 'string') return false;
     const expected = Buffer.from(adminToken);
     const supplied = Buffer.from(suppliedToken);
     return expected.length === supplied.length && crypto.timingSafeEqual(expected, supplied);
   }
 
+  function getAdminSessionId(request) {
+    return parseCookies(request.get('cookie'))[ADMIN_SESSION_COOKIE] || '';
+  }
+
+  function getValidAdminSession(request) {
+    const sessionId = getAdminSessionId(request);
+    if (!sessionId) return null;
+
+    const session = adminSessions.get(sessionId);
+    if (!session || session.expiresAt <= Date.now()) {
+      adminSessions.delete(sessionId);
+      return null;
+    }
+    return { id: sessionId, ...session };
+  }
+
+  function createAdminSession() {
+    const id = crypto.randomBytes(32).toString('hex');
+    const expiresAt = Date.now() + sessionTtlMs;
+    adminSessions.set(id, { createdAt: Date.now(), expiresAt });
+    return { id, expiresAt };
+  }
+
+  function useSecureAdminCookie(request) {
+    return (
+      request.secure === true ||
+      request.protocol === 'https' ||
+      process.env.NODE_ENV === 'production' ||
+      process.env.ADMIN_COOKIE_SECURE === 'true' ||
+      process.env.ADMIN_COOKIE_SECURE === '1'
+    );
+  }
+
+  function setAdminSessionCookie(request, response, sessionId, maxAgeSeconds) {
+    const attributes = [
+      `${ADMIN_SESSION_COOKIE}=${encodeURIComponent(sessionId)}`,
+      `Path=${ADMIN_SESSION_COOKIE_PATH}`,
+      'HttpOnly',
+      'SameSite=Strict',
+      `Max-Age=${Math.max(1, Math.floor(maxAgeSeconds))}`,
+    ];
+    if (useSecureAdminCookie(request)) attributes.push('Secure');
+    response.set('Set-Cookie', attributes.join('; '));
+  }
+
+  function clearAdminSessionCookie(request, response) {
+    const attributes = [
+      `${ADMIN_SESSION_COOKIE}=`,
+      `Path=${ADMIN_SESSION_COOKIE_PATH}`,
+      'HttpOnly',
+      'SameSite=Strict',
+      'Max-Age=0',
+      'Expires=Thu, 01 Jan 1970 00:00:00 GMT',
+    ];
+    if (useSecureAdminCookie(request)) attributes.push('Secure');
+    response.set('Set-Cookie', attributes.join('; '));
+  }
+
+  function isSameOriginRequest(request) {
+    const origin = request.get('origin');
+    if (!origin) return true;
+    try {
+      const originUrl = new URL(origin);
+      return (
+        originUrl.protocol === `${request.protocol}:` &&
+        originUrl.host.toLowerCase() === String(request.get('host') || '').toLowerCase()
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  function hasAdminAccess(request) {
+    if (!adminToken) return false;
+
+    if (getValidAdminSession(request)) return true;
+
+    // Keep bearer tokens available for scripts that already use the admin API. The browser
+    // console authenticates with the short-lived HttpOnly session cookie instead.
+    const authorization = request.get('authorization') || '';
+    const suppliedToken = authorization.startsWith('Bearer ') ? authorization.slice(7) : '';
+    return tokenMatches(suppliedToken);
+  }
+
   function requireAdmin(request, response, next) {
+    response.set('Cache-Control', 'no-store');
     if (!adminToken) {
       response
         .status(503)
@@ -1026,12 +1155,17 @@ function createChatServer({
       return;
     }
 
-    if (!hasAdminAccess(request)) {
-      response.status(401).json({ error: 'A valid admin token is required.' });
+    if (request.method !== 'GET' && request.method !== 'HEAD' && !isSameOriginRequest(request)) {
+      response.status(403).json({ error: 'Admin requests must come from the same origin.' });
       return;
     }
 
-    response.set('Cache-Control', 'no-store');
+    if (!hasAdminAccess(request)) {
+      if (getAdminSessionId(request)) clearAdminSessionCookie(request, response);
+      response.status(401).json({ error: 'A valid admin session or token is required.' });
+      return;
+    }
+
     next();
   }
 
@@ -1073,6 +1207,87 @@ function createChatServer({
       averageMatchWaitMs: averageMatchWaitMs === null ? null : Math.round(averageMatchWaitMs),
       activeBans: listActiveBans().length,
     });
+  });
+
+  app.post('/api/admin/login', (request, response) => {
+    response.set('Cache-Control', 'no-store');
+    if (!isSameOriginRequest(request)) {
+      response.status(403).json({ error: 'Admin sign-in must come from the same origin.' });
+      return;
+    }
+    if (!adminToken) {
+      response
+        .status(503)
+        .json({ error: 'Admin access is disabled. Configure ADMIN_TOKEN first.' });
+      return;
+    }
+
+    if (adminLoginRateLimiter.isLimited(getRequestIp(request))) {
+      response.set('Retry-After', String(Math.ceil(LIMITS.adminLoginRate.windowMs / 1000)));
+      response.status(429).json({ error: 'Too many admin login attempts. Try again later.' });
+      return;
+    }
+
+    const suppliedToken = request.body?.token ?? request.body?.adminToken;
+    if (!tokenMatches(suppliedToken)) {
+      response.status(401).json({ error: 'Invalid admin credentials.' });
+      return;
+    }
+
+    const previousSessionId = getAdminSessionId(request);
+    if (previousSessionId) adminSessions.delete(previousSessionId);
+
+    const session = createAdminSession();
+    setAdminSessionCookie(request, response, session.id, Math.ceil(sessionTtlMs / 1000));
+    response.json({
+      authenticated: true,
+      expiresAt: new Date(session.expiresAt).toISOString(),
+    });
+  });
+
+  app.get('/api/admin/session', (request, response) => {
+    response.set('Cache-Control', 'no-store');
+    if (!adminToken) {
+      response
+        .status(503)
+        .json({ error: 'Admin access is disabled. Configure ADMIN_TOKEN first.' });
+      return;
+    }
+
+    const session = getValidAdminSession(request);
+    if (session) {
+      response.json({
+        authenticated: true,
+        expiresAt: new Date(session.expiresAt).toISOString(),
+      });
+      return;
+    }
+
+    // Allow existing API clients to check access while the browser migrates to sessions.
+    if (hasAdminAccess(request)) {
+      response.json({ authenticated: true, expiresAt: null });
+      return;
+    }
+
+    clearAdminSessionCookie(request, response);
+    response.status(401).json({ authenticated: false, error: 'Sign in to the admin console.' });
+  });
+
+  app.post('/api/admin/logout', (request, response) => {
+    response.set('Cache-Control', 'no-store');
+    if (!isSameOriginRequest(request)) {
+      response.status(403).json({ error: 'Admin sign-out must come from the same origin.' });
+      return;
+    }
+    const sessionId = getAdminSessionId(request);
+    if (sessionId) adminSessions.delete(sessionId);
+    clearAdminSessionCookie(request, response);
+    response.json({ authenticated: false });
+  });
+
+  // Do not let the static-file middleware expose the admin document at a predictable path.
+  app.get('/admin.html', (request, response) => {
+    response.sendStatus(404);
   });
   if (adminPath !== '/admin') {
     app.get('/admin', (request, response) => {
@@ -2125,8 +2340,10 @@ function createChatServer({
     close: () =>
       new Promise((resolve, reject) => {
         clearInterval(matchingInterval);
+        clearInterval(adminSessionCleanup);
         httpRateLimiter.stop();
         connectionRateLimiter.stop();
+        adminLoginRateLimiter.stop();
         io.close(async (error) => {
           try {
             await chatStore.flush();

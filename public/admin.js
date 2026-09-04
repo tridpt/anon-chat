@@ -1,6 +1,10 @@
 const tokenForm = document.getElementById('token-form');
 const tokenInput = document.getElementById('admin-token');
-const clearTokenButton = document.getElementById('clear-token');
+const logoutButton = document.getElementById('admin-logout');
+const signInButton = document.getElementById('sign-in');
+const tokenTitle = document.getElementById('token-title');
+const tokenDescription = document.getElementById('token-description');
+const adminWorkspace = document.getElementById('admin-workspace');
 const statusFilter = document.getElementById('status-filter');
 const refreshButton = document.getElementById('refresh-reports');
 const reportsContainer = document.getElementById('reports');
@@ -30,12 +34,13 @@ const linkedReportsStat = document.getElementById('stat-linked-reports');
 const resolvedReportsStat = document.getElementById('stat-resolved-reports');
 const storedChatsStat = document.getElementById('stat-stored-chats');
 const activeBansStat = document.getElementById('stat-active-bans');
-const TOKEN_KEY = 'ghostchat-admin-token';
 const TAB_KEY = 'ghostchat-admin-tab';
+const LEGACY_TOKEN_KEY = 'ghostchat-admin-token';
 const CHAT_PAGE_SIZE = 10;
 const TAB_ORDER = ['overview', 'reports', 'resolved', 'bans', 'audit', 'chats'];
 let activeTab = 'overview';
 let chatPage = 1;
+let isAuthenticated = false;
 
 function updateReportStats(activeReports, archivedReports = []) {
   const allReports = [...activeReports, ...archivedReports];
@@ -44,10 +49,6 @@ function updateReportStats(activeReports, archivedReports = []) {
   openReportsStat.innerText = String(openReports);
   linkedReportsStat.innerText = String(linkedReports);
   resolvedReportsStat.innerText = String(archivedReports.length);
-}
-
-function getToken() {
-  return window.sessionStorage.getItem(TOKEN_KEY) || '';
 }
 
 function getSavedTab() {
@@ -60,12 +61,48 @@ function getSavedTab() {
 }
 
 function loadActiveTab() {
-  if (!getToken()) return;
+  if (!isAuthenticated) return;
   if (activeTab === 'overview') return loadOverview();
   if (activeTab === 'reports' || activeTab === 'resolved') return loadReports();
   if (activeTab === 'bans') return loadBans();
   if (activeTab === 'audit') return loadAuditLog();
   return loadChats();
+}
+
+function clearWorkspace() {
+  reportsContainer.innerHTML = '';
+  resolvedReportsContainer.innerHTML = '';
+  bansContainer.innerHTML = '';
+  auditLogContainer.innerHTML = '';
+  chatsContainer.innerHTML = '';
+  chatPagination.hidden = true;
+  openReportsStat.innerText = '—';
+  linkedReportsStat.innerText = '—';
+  resolvedReportsStat.innerText = '—';
+  storedChatsStat.innerText = '—';
+  activeBansStat.innerText = '—';
+}
+
+function setAuthenticated(authenticated, expiresAt = null) {
+  isAuthenticated = authenticated;
+  adminWorkspace.hidden = !authenticated;
+  tokenForm.classList.toggle('authenticated', authenticated);
+  tokenInput.hidden = authenticated;
+  tokenInput.required = !authenticated;
+  signInButton.hidden = authenticated;
+  logoutButton.hidden = !authenticated;
+
+  if (authenticated) {
+    tokenTitle.innerText = 'Admin session active';
+    tokenDescription.innerText = expiresAt
+      ? `This session expires ${formatDate(expiresAt)}. The credential is held in an HttpOnly cookie.`
+      : 'This session is protected by an HttpOnly cookie.';
+  } else {
+    tokenTitle.innerText = 'Sign in to moderation tools';
+    tokenDescription.innerText =
+      'Your token is exchanged for a short-lived, HttpOnly session and is never stored here.';
+    clearWorkspace();
+  }
 }
 
 function setActiveTab(tabName, { load = true } = {}) {
@@ -102,18 +139,24 @@ function formatDate(value) {
 }
 
 async function api(path, options = {}) {
-  const token = getToken();
-  if (!token) throw new Error('Enter the ADMIN_TOKEN first.');
-
   const response = await fetch(path, {
     ...options,
+    credentials: 'same-origin',
     headers: {
-      Authorization: `Bearer ${token}`,
       ...(options.body ? { 'Content-Type': 'application/json' } : {}),
       ...options.headers,
     },
   });
-  const data = await response.json();
+  let data = {};
+  try {
+    data = await response.json();
+  } catch {
+    // Keep a useful fallback for non-JSON errors.
+  }
+  if (response.status === 401) {
+    setAuthenticated(false);
+    setStatus('Your admin session expired. Sign in again.', true);
+  }
   if (!response.ok) throw new Error(data.error || 'Request failed.');
   return data;
 }
@@ -582,9 +625,8 @@ async function loadChats() {
 }
 
 async function exportChats(format) {
-  const token = getToken();
-  if (!token) {
-    setStatus('Enter the ADMIN_TOKEN first.', true);
+  if (!isAuthenticated) {
+    setStatus('Sign in before exporting chats.', true);
     return;
   }
 
@@ -596,10 +638,19 @@ async function exportChats(format) {
   try {
     setStatus(`Preparing ${format.toUpperCase()} export...`);
     const response = await fetch(`/api/admin/chats/export?${query.toString()}`, {
-      headers: { Authorization: `Bearer ${token}` },
+      credentials: 'same-origin',
     });
     if (!response.ok) {
-      const data = await response.json();
+      let data = {};
+      try {
+        data = await response.json();
+      } catch {
+        // Keep a useful fallback for non-JSON errors.
+      }
+      if (response.status === 401) {
+        setAuthenticated(false);
+        setStatus('Your admin session expired. Sign in again.', true);
+      }
       throw new Error(data.error || 'Export failed.');
     }
     const blob = await response.blob();
@@ -614,28 +665,89 @@ async function exportChats(format) {
   }
 }
 
-tokenForm.addEventListener('submit', (event) => {
+tokenForm.addEventListener('submit', async (event) => {
   event.preventDefault();
-  window.sessionStorage.setItem(TOKEN_KEY, tokenInput.value);
-  loadActiveTab();
+  const token = tokenInput.value.trim();
+  if (!token) {
+    setStatus('Enter the admin token first.', true);
+    return;
+  }
+
+  signInButton.disabled = true;
+  try {
+    const response = await fetch('/api/admin/login', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    });
+    let data = {};
+    try {
+      data = await response.json();
+    } catch {
+      // Keep a useful fallback for non-JSON errors.
+    }
+    if (!response.ok) throw new Error(data.error || 'Sign-in failed.');
+
+    tokenInput.value = '';
+    setAuthenticated(true, data.expiresAt);
+    setStatus('Signed in. Moderation data is ready.');
+    loadActiveTab();
+  } catch (error) {
+    setStatus(error.message, true);
+  } finally {
+    signInButton.disabled = false;
+  }
 });
 
-clearTokenButton.addEventListener('click', () => {
-  window.sessionStorage.removeItem(TOKEN_KEY);
-  tokenInput.value = '';
-  reportsContainer.innerHTML = '';
-  resolvedReportsContainer.innerHTML = '';
-  bansContainer.innerHTML = '';
-  auditLogContainer.innerHTML = '';
-  chatsContainer.innerHTML = '';
-  chatPagination.hidden = true;
-  openReportsStat.innerText = '—';
-  linkedReportsStat.innerText = '—';
-  resolvedReportsStat.innerText = '—';
-  storedChatsStat.innerText = '—';
-  activeBansStat.innerText = '—';
-  setStatus('Admin token cleared.');
+logoutButton.addEventListener('click', async () => {
+  logoutButton.disabled = true;
+  let logoutFailed = false;
+  try {
+    const response = await fetch('/api/admin/logout', {
+      method: 'POST',
+      credentials: 'same-origin',
+    });
+    logoutFailed = !response.ok;
+  } catch {
+    logoutFailed = true;
+  } finally {
+    setAuthenticated(false);
+    setStatus(
+      logoutFailed
+        ? 'Signed out locally. The server could not confirm the session revocation.'
+        : 'Signed out of the admin console.',
+      logoutFailed,
+    );
+    logoutButton.disabled = false;
+  }
 });
+
+async function restoreAdminSession() {
+  try {
+    const response = await fetch('/api/admin/session', { credentials: 'same-origin' });
+    let data = {};
+    try {
+      data = await response.json();
+    } catch {
+      // Keep a useful fallback for non-JSON errors.
+    }
+    if (response.ok && data.authenticated) {
+      setAuthenticated(true, data.expiresAt);
+      setStatus('Session restored. Moderation data is ready.');
+      loadActiveTab();
+      return;
+    }
+    if (response.status !== 401) {
+      throw new Error(data.error || 'Could not verify the admin session.');
+    }
+    setAuthenticated(false);
+    setStatus('Sign in to load moderation data.');
+  } catch (error) {
+    setAuthenticated(false);
+    setStatus(error.message, true);
+  }
+}
 
 refreshButton.addEventListener('click', loadReports);
 refreshResolvedButton.addEventListener('click', loadReports);
@@ -663,7 +775,11 @@ statusFilter.addEventListener('change', loadReports);
 
 activeTab = getSavedTab();
 setActiveTab(activeTab, { load: false });
-tokenInput.value = getToken();
-if (getToken()) {
-  loadActiveTab();
+setAuthenticated(false);
+try {
+  // Remove the token saved by older console builds now that sessions use an HttpOnly cookie.
+  window.sessionStorage.removeItem(LEGACY_TOKEN_KEY);
+} catch {
+  // Storage can be disabled; the current build never writes credentials there.
 }
+restoreAdminSession();

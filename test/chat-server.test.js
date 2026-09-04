@@ -24,10 +24,16 @@ function waitForEvent(socket, event, timeoutMs = 1_500) {
 
 async function createTestServer(
   t,
-  { logger = { info() {}, error() {} }, adminToken, adminPath = '/admin' } = {},
+  { logger = { info() {}, error() {} }, adminToken, adminPath = '/admin', adminSessionTtlMs } = {},
 ) {
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'anon-chat-test-'));
-  const chat = createChatServer({ logger, dataDir, adminToken: adminToken ?? '', adminPath });
+  const chat = createChatServer({
+    logger,
+    dataDir,
+    adminToken: adminToken ?? '',
+    adminPath,
+    adminSessionTtlMs,
+  });
   await new Promise((resolve, reject) => {
     chat.server.once('error', reject);
     chat.server.listen(0, '127.0.0.1', resolve);
@@ -264,7 +270,7 @@ test('accepts a report and writes a structured moderation log entry', async (t) 
   assert.match(report.createdAt, /^\d{4}-\d{2}-\d{2}T/);
 });
 
-test('persists reports and requires an admin token to review them', async (t) => {
+test('persists reports and protects admin review', async (t) => {
   const adminToken = 'test-admin-token-123';
   const url = await createTestServer(t, { adminToken });
   const adminPage = await fetch(`${url}/admin`);
@@ -274,6 +280,8 @@ test('persists reports and requires an admin token to review them', async (t) =>
   assert.match(adminMarkup, /role="tablist"/);
   assert.match(adminMarkup, /data-tab="reports"/);
   assert.match(adminMarkup, /data-tab-panel="chats"/);
+  assert.match(adminMarkup, /Sign in to moderation tools/);
+  assert.match(adminMarkup, /HttpOnly/);
 
   const alice = await connectClient(t, url);
   const bob = await connectClient(t, url);
@@ -424,6 +432,100 @@ test('persists reports and requires an admin token to review them', async (t) =>
   await queued;
 });
 
+test('creates, restores, and revokes cookie-based admin sessions', async (t) => {
+  const adminToken = 'test-admin-token-123';
+  const url = await createTestServer(t, { adminToken });
+
+  const unauthenticated = await fetch(`${url}/api/admin/session`);
+  assert.equal(unauthenticated.status, 401);
+
+  const invalidLogin = await fetch(`${url}/api/admin/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token: 'wrong-token' }),
+  });
+  assert.equal(invalidLogin.status, 401);
+  assert.equal(invalidLogin.headers.get('set-cookie'), null);
+
+  const crossOriginLogin = await fetch(`${url}/api/admin/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: 'https://evil.example' },
+    body: JSON.stringify({ token: adminToken }),
+  });
+  assert.equal(crossOriginLogin.status, 403);
+
+  const loginResponse = await fetch(`${url}/api/admin/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token: adminToken }),
+  });
+  assert.equal(loginResponse.status, 200);
+  const setCookie = loginResponse.headers.get('set-cookie');
+  assert.match(setCookie, /^ghostchat_admin_session=[^;]+;/);
+  assert.match(setCookie, /HttpOnly/i);
+  assert.match(setCookie, /SameSite=Strict/i);
+  assert.match(setCookie, /Path=\/api\/admin/i);
+  assert.doesNotMatch(setCookie, new RegExp(adminToken));
+  const cookie = setCookie.split(';', 1)[0];
+
+  const session = await fetch(`${url}/api/admin/session`, {
+    headers: { Cookie: cookie },
+  });
+  assert.equal(session.status, 200);
+  const sessionBody = await session.json();
+  assert.equal(sessionBody.authenticated, true);
+  assert.match(sessionBody.expiresAt, /^\d{4}-\d{2}-\d{2}T/);
+
+  const protectedRequest = await fetch(`${url}/api/admin/reports`, {
+    headers: { Cookie: cookie },
+  });
+  assert.equal(protectedRequest.status, 200);
+
+  const crossOriginMutation = await fetch(`${url}/api/admin/bans/not-a-valid-client-id`, {
+    method: 'DELETE',
+    headers: { Cookie: cookie, Origin: 'https://evil.example' },
+  });
+  assert.equal(crossOriginMutation.status, 403);
+
+  const logout = await fetch(`${url}/api/admin/logout`, {
+    method: 'POST',
+    headers: { Cookie: cookie },
+  });
+  assert.equal(logout.status, 200);
+  assert.match(logout.headers.get('set-cookie'), /Max-Age=0/i);
+
+  const crossOriginLogout = await fetch(`${url}/api/admin/logout`, {
+    method: 'POST',
+    headers: { Cookie: cookie, Origin: 'https://evil.example' },
+  });
+  assert.equal(crossOriginLogout.status, 403);
+
+  const revoked = await fetch(`${url}/api/admin/session`, {
+    headers: { Cookie: cookie },
+  });
+  assert.equal(revoked.status, 401);
+});
+
+test('expires an admin session after its configured lifetime', async (t) => {
+  const url = await createTestServer(t, {
+    adminToken: 'test-admin-token-123',
+    adminSessionTtlMs: 25,
+  });
+  const loginResponse = await fetch(`${url}/api/admin/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token: 'test-admin-token-123' }),
+  });
+  assert.equal(loginResponse.status, 200);
+  const cookie = loginResponse.headers.get('set-cookie').split(';', 1)[0];
+
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  const expired = await fetch(`${url}/api/admin/session`, {
+    headers: { Cookie: cookie },
+  });
+  assert.equal(expired.status, 401);
+});
+
 test('persists chat messages and exposes them only to admins', async (t) => {
   const adminToken = 'test-admin-token-123';
   const url = await createTestServer(t, { adminToken });
@@ -511,6 +613,7 @@ test('hides the admin page behind a configured secret path', async (t) => {
   const url = await createTestServer(t, { adminToken: 'test-admin-token-123', adminPath });
 
   assert.equal((await fetch(`${url}/admin`)).status, 404);
+  assert.equal((await fetch(`${url}/admin.html`)).status, 404);
   assert.equal((await fetch(`${url}${adminPath}`)).status, 200);
 });
 

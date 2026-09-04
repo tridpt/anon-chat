@@ -18,6 +18,8 @@ and the project follows [Semantic Versioning](https://semver.org/).
   shared in Redis and matches are orchestrated across instances, so sticky sessions are no
   longer required for matching. `/health` counts are aggregated across the cluster.
 - A `docker-compose.yml` stack (two app instances + Redis) for verifying the shared queue.
+- Short-lived browser admin sessions using `HttpOnly`, `SameSite=Strict` cookies, with sign-out,
+  expiration, login throttling, and same-origin checks for moderation changes.
 
 ### Changed
 
