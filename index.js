@@ -6,6 +6,27 @@ const crypto = require('crypto');
 const fs = require('fs/promises');
 const { readFileSync } = require('fs');
 
+function loadLocalEnv() {
+  const envFile = path.join(__dirname, '.env');
+  try {
+    if (typeof process.loadEnvFile === 'function') {
+      process.loadEnvFile(envFile);
+      return;
+    }
+
+    const contents = readFileSync(envFile, 'utf8');
+    for (const line of contents.split(/\r?\n/)) {
+      const match = line.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+      if (!match || process.env[match[1]] !== undefined) continue;
+      process.env[match[1]] = match[2].replace(/^(['"])(.*)\1$/, '$2');
+    }
+  } catch (error) {
+    if (error.code !== 'ENOENT') console.warn(`Could not load .env: ${error.message}`);
+  }
+}
+
+loadLocalEnv();
+
 const COLORS = [
   '#FF6B6B',
   '#4ECDC4',
@@ -128,6 +149,8 @@ function countLinks(text) {
   return matches ? matches.length : 0;
 }
 const REPORT_STATUSES = new Set(['new', 'reviewed', 'resolved']);
+const MODERATION_ACTIONS = new Set(['none', 'chat_block', 'permanent_ban']);
+const CHAT_BLOCK_DURATION_MS = 24 * 60 * 60 * 1000;
 const LANGUAGES = new Set(['any', 'vi', 'en']);
 const REACTION_EMOJIS = new Set(['👍', '❤️', '😂', '😮', '😢', '🔥']);
 
@@ -255,6 +278,69 @@ function copyValue(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function normalizeAdminPath(value) {
+  const candidate = typeof value === 'string' ? value.trim() : '';
+  return /^\/[A-Za-z0-9_-]{8,100}$/.test(candidate) ? candidate : '/admin';
+}
+
+function parseChatDateFilter(value, endOfDay = false) {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const trimmed = value.trim();
+  const parsed = Date.parse(trimmed);
+  if (Number.isNaN(parsed)) return NaN;
+  if (endOfDay && /^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return parsed + 24 * 60 * 60 * 1000 - 1;
+  }
+  return parsed;
+}
+
+function csvCell(value) {
+  return `"${String(value ?? '').replace(/"/g, '""')}"`;
+}
+
+function serializeChatsCsv(chats) {
+  const rows = [
+    [
+      'chatId',
+      'startedAt',
+      'endedAt',
+      'participantAliases',
+      'participantIds',
+      'messageId',
+      'messageAt',
+      'senderAlias',
+      'senderClientId',
+      'text',
+    ],
+  ];
+  for (const chat of chats) {
+    const aliases = (chat.participants ?? []).map((participant) => participant.alias).join(' / ');
+    const clientIds = (chat.participants ?? [])
+      .map((participant) => participant.clientId)
+      .join(' / ');
+    if (!chat.messages?.length) {
+      rows.push([chat.id, chat.startedAt, chat.endedAt, aliases, clientIds, '', '', '', '', '']);
+      continue;
+    }
+    for (const message of chat.messages) {
+      rows.push([
+        chat.id,
+        chat.startedAt,
+        chat.endedAt,
+        aliases,
+        clientIds,
+        message.id,
+        message.timestamp,
+        message.username,
+        message.clientId,
+        message.text,
+      ]);
+    }
+  }
+  // Excel uses the UTF-8 BOM to detect the encoding when opening a CSV directly.
+  return `\uFEFF${rows.map((row) => row.map(csvCell).join(',')).join('\n')}\n`;
+}
+
 // Simple in-memory sliding-window rate limiter keyed by client IP. Timestamps older than the
 // window are discarded lazily on each check, and idle keys are pruned periodically so memory
 // stays bounded even under churn. Intended as a coarse backstop, not a substitute for an
@@ -336,7 +422,9 @@ async function setupRedisAdapter(io, redisUrl, logger) {
 
 function createReportStore(dataDirectory) {
   const reportsFile = path.join(dataDirectory, 'reports.json');
+  const resolvedReportsFile = path.join(dataDirectory, 'resolved-reports.json');
   let reports = [];
+  let resolvedReports = [];
   let initialized = false;
   let operationQueue = Promise.resolve();
 
@@ -350,50 +438,206 @@ function createReportStore(dataDirectory) {
     if (initialized) return;
 
     await fs.mkdir(dataDirectory, { recursive: true });
-    try {
-      const contents = await fs.readFile(reportsFile, 'utf8');
-      const parsed = JSON.parse(contents);
-      if (!Array.isArray(parsed)) throw new Error('Report store must contain an array.');
-      reports = parsed;
-    } catch (error) {
-      if (error.code !== 'ENOENT') throw error;
-      reports = [];
+    async function readReports(file) {
+      try {
+        const contents = await fs.readFile(file, 'utf8');
+        const parsed = JSON.parse(contents);
+        if (!Array.isArray(parsed)) throw new Error('Report store must contain an array.');
+        return parsed;
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+        return [];
+      }
     }
+
+    const [storedReports, storedResolvedReports] = await Promise.all([
+      readReports(reportsFile),
+      readReports(resolvedReportsFile),
+    ]);
+    const resolvedFromLegacyFile = storedReports.filter((report) => report.status === 'resolved');
+    reports = storedReports.filter((report) => report.status !== 'resolved');
+    resolvedReports = [...storedResolvedReports, ...resolvedFromLegacyFile].filter(
+      (report, index, all) => all.findIndex((item) => item.id === report.id) === index,
+    );
+    if (resolvedFromLegacyFile.length > 0) await persistAll();
     initialized = true;
   }
 
-  async function persist() {
-    const temporaryFile = `${reportsFile}.${process.pid}.${Date.now()}.tmp`;
-    await fs.writeFile(temporaryFile, `${JSON.stringify(reports, null, 2)}\n`, 'utf8');
-    await fs.rename(temporaryFile, reportsFile);
+  async function persistFile(file, values) {
+    const temporaryFile = `${file}.${process.pid}.${Date.now()}.tmp`;
+    await fs.writeFile(temporaryFile, `${JSON.stringify(values, null, 2)}\n`, 'utf8');
+    await fs.rename(temporaryFile, file);
+  }
+
+  async function persistAll() {
+    await Promise.all([
+      persistFile(reportsFile, reports),
+      persistFile(resolvedReportsFile, resolvedReports),
+    ]);
   }
 
   return {
     append: (report) =>
       enqueue(async () => {
         await initialize();
-        reports.unshift(report);
-        await persist();
+        if (report.status === 'resolved') resolvedReports.unshift(report);
+        else reports.unshift(report);
+        await persistAll();
         return copyValue(report);
       }),
     list: (status) =>
       enqueue(async () => {
         await initialize();
+        const source = status === 'resolved' ? resolvedReports : reports;
         const matchingReports = status
-          ? reports.filter((report) => report.status === status)
-          : reports;
+          ? source.filter((report) => report.status === status)
+          : source;
         return copyValue(matchingReports);
+      }),
+    listAll: () =>
+      enqueue(async () => {
+        await initialize();
+        return copyValue([...reports, ...resolvedReports]);
       }),
     update: (id, changes) =>
       enqueue(async () => {
         await initialize();
-        const report = reports.find((item) => item.id === id);
-        if (!report) return null;
+        const activeIndex = reports.findIndex((item) => item.id === id);
+        const resolvedIndex = resolvedReports.findIndex((item) => item.id === id);
+        if (activeIndex === -1 && resolvedIndex === -1) return null;
 
-        Object.assign(report, changes);
-        await persist();
-        return copyValue(report);
+        const source = activeIndex >= 0 ? reports : resolvedReports;
+        const index = activeIndex >= 0 ? activeIndex : resolvedIndex;
+        const updated = { ...source[index], ...changes };
+        source.splice(index, 1);
+        if (updated.status === 'resolved') resolvedReports.unshift(updated);
+        else reports.unshift(updated);
+        await persistAll();
+        return copyValue(updated);
       }),
+  };
+}
+
+function createChatStore(dataDirectory, retentionDays = 30) {
+  const chatsFile = path.join(dataDirectory, 'chats.json');
+  let chats = [];
+  let initialized = false;
+  let operationQueue = Promise.resolve();
+
+  function enqueue(operation) {
+    const task = operationQueue.then(operation, operation);
+    operationQueue = task.catch(() => undefined);
+    return task;
+  }
+
+  function pruneExpired() {
+    if (!Number.isFinite(retentionDays) || retentionDays <= 0) return;
+    const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+    chats = chats.filter((chat) => {
+      if (!chat.endedAt) return true;
+      const endedAt = Date.parse(chat.endedAt);
+      return Number.isNaN(endedAt) || endedAt >= cutoff;
+    });
+  }
+
+  async function initialize() {
+    if (initialized) return;
+
+    await fs.mkdir(dataDirectory, { recursive: true });
+    try {
+      const contents = await fs.readFile(chatsFile, 'utf8');
+      const parsed = JSON.parse(contents);
+      if (!Array.isArray(parsed)) throw new Error('Chat store must contain an array.');
+      chats = parsed;
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      chats = [];
+    }
+    pruneExpired();
+    initialized = true;
+  }
+
+  async function persist() {
+    const temporaryFile = `${chatsFile}.${process.pid}.${Date.now()}.tmp`;
+    await fs.writeFile(temporaryFile, `${JSON.stringify(chats, null, 2)}\n`, 'utf8');
+    await fs.rename(temporaryFile, chatsFile);
+  }
+
+  return {
+    start: (chat) =>
+      enqueue(async () => {
+        await initialize();
+        if (chats.some((item) => item.id === chat.id)) return;
+        chats.unshift({ ...chat, messages: [], endedAt: null, lastActivityAt: chat.startedAt });
+        pruneExpired();
+        await persist();
+      }),
+    appendMessage: (roomId, message) =>
+      enqueue(async () => {
+        await initialize();
+        const chat = chats.find((item) => item.id === roomId);
+        if (!chat || chat.endedAt) return;
+        chat.messages.push(copyValue(message));
+        chat.lastActivityAt = message.timestamp;
+        await persist();
+      }),
+    finish: (roomId, endedAt = new Date().toISOString()) =>
+      enqueue(async () => {
+        await initialize();
+        const chat = chats.find((item) => item.id === roomId);
+        if (!chat || chat.endedAt) return;
+        chat.endedAt = endedAt;
+        chat.lastActivityAt = endedAt;
+        pruneExpired();
+        await persist();
+      }),
+    list: (limit = 50, { query = '', from = null, to = null } = {}, offset = 0) =>
+      enqueue(async () => {
+        await initialize();
+        const normalizedQuery = query.toLowerCase();
+        const matchingChats = chats.filter((chat) => {
+          const startedAt = Date.parse(chat.startedAt);
+          const lastActivityAt = Date.parse(chat.lastActivityAt || chat.startedAt);
+          if (from !== null && !Number.isNaN(lastActivityAt) && lastActivityAt < from) return false;
+          if (to !== null && !Number.isNaN(startedAt) && startedAt > to) return false;
+          if (!normalizedQuery) return true;
+
+          const searchable = [
+            ...(chat.participants ?? []).flatMap((participant) => [
+              participant.alias,
+              participant.clientId,
+            ]),
+            ...(chat.messages ?? []).flatMap((message) => [
+              message.username,
+              message.clientId,
+              message.text,
+            ]),
+          ]
+            .filter(Boolean)
+            .join(' ')
+            .toLowerCase();
+          return searchable.includes(normalizedQuery);
+        });
+        return {
+          chats: copyValue(matchingChats.slice(offset, offset + limit)),
+          total: matchingChats.length,
+        };
+      }),
+    get: (id) =>
+      enqueue(async () => {
+        await initialize();
+        return copyValue(chats.find((chat) => chat.id === id) || null);
+      }),
+    remove: (id) =>
+      enqueue(async () => {
+        await initialize();
+        const index = chats.findIndex((chat) => chat.id === id);
+        if (index === -1) return null;
+        const [removed] = chats.splice(index, 1);
+        await persist();
+        return copyValue(removed);
+      }),
+    flush: () => operationQueue,
   };
 }
 
@@ -420,8 +664,8 @@ function createBanStore(dataDirectory) {
             (entry) =>
               isPlainObject(entry) &&
               typeof entry.clientId === 'string' &&
-              typeof entry.banUntil === 'number' &&
-              entry.banUntil > now,
+              (entry.permanent === true ||
+                (typeof entry.banUntil === 'number' && entry.banUntil > now)),
           );
         } catch (error) {
           if (error.code !== 'ENOENT') throw error;
@@ -438,10 +682,63 @@ function createBanStore(dataDirectory) {
   };
 }
 
+function createAuditStore(dataDirectory) {
+  const auditFile = path.join(dataDirectory, 'moderation-log.json');
+  let events = [];
+  let initialized = false;
+  let operationQueue = Promise.resolve();
+
+  function enqueue(operation) {
+    const task = operationQueue.then(operation, operation);
+    operationQueue = task.catch(() => undefined);
+    return task;
+  }
+
+  async function initialize() {
+    if (initialized) return;
+    await fs.mkdir(dataDirectory, { recursive: true });
+    try {
+      const contents = await fs.readFile(auditFile, 'utf8');
+      const parsed = JSON.parse(contents);
+      if (!Array.isArray(parsed)) throw new Error('Moderation log must contain an array.');
+      events = parsed.filter((event) => isPlainObject(event));
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      events = [];
+    }
+    initialized = true;
+  }
+
+  async function persist() {
+    await fs.mkdir(dataDirectory, { recursive: true });
+    const temporaryFile = `${auditFile}.${process.pid}.${Date.now()}.tmp`;
+    await fs.writeFile(temporaryFile, `${JSON.stringify(events, null, 2)}\n`, 'utf8');
+    await fs.rename(temporaryFile, auditFile);
+  }
+
+  return {
+    append: (event) =>
+      enqueue(async () => {
+        await initialize();
+        events.unshift(event);
+        await persist();
+        return copyValue(event);
+      }),
+    list: (limit = 100) =>
+      enqueue(async () => {
+        await initialize();
+        const safeLimit = Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 500) : 100;
+        return copyValue(events.slice(0, safeLimit));
+      }),
+    flush: () => operationQueue,
+  };
+}
+
 function createChatServer({
   logger = console,
   dataDir = process.env.DATA_DIR || path.join(__dirname, 'data'),
   adminToken = process.env.ADMIN_TOKEN,
+  adminPath = process.env.ADMIN_PATH || '/admin',
   redisUrl = process.env.REDIS_URL,
   profanityWords,
   trustProxy = process.env.TRUST_PROXY === 'true' || process.env.TRUST_PROXY === '1',
@@ -450,11 +747,15 @@ function createChatServer({
     profanityWords ?? loadProfanityList(process.env, logger),
   );
   const app = express();
+  adminPath = normalizeAdminPath(adminPath);
   if (trustProxy) app.set('trust proxy', true);
   const server = http.createServer(app);
   const io = new Server(server, { maxHttpBufferSize: LIMITS.maxPayloadBytes });
   const reportStore = createReportStore(dataDir);
+  const retentionDays = Number.parseInt(process.env.CHAT_RETENTION_DAYS || '30', 10);
+  const chatStore = createChatStore(dataDir, Number.isFinite(retentionDays) ? retentionDays : 30);
   const banStore = createBanStore(dataDir);
+  const auditStore = createAuditStore(dataDir);
   const httpRateLimiter = createIpRateLimiter(LIMITS.httpRate);
   const connectionRateLimiter = createIpRateLimiter(LIMITS.connectionRate);
   let redisClients = null;
@@ -509,17 +810,35 @@ function createChatServer({
   let redisCmd = null;
   const distributedEnabled = () => redisCmd !== null;
 
+  function createBanRecord(clientId, banUntil, details = {}) {
+    return {
+      clientId,
+      banUntil,
+      permanent: banUntil === Number.POSITIVE_INFINITY,
+      alias: typeof details.alias === 'string' ? details.alias : '',
+      reason: typeof details.reason === 'string' ? details.reason : '',
+      action: typeof details.action === 'string' ? details.action : 'automatic',
+      appliedAt: details.appliedAt || new Date().toISOString(),
+      reportId: typeof details.reportId === 'string' ? details.reportId : null,
+    };
+  }
+
+  function isActiveBan(ban, now = Date.now()) {
+    return ban?.permanent === true || ban?.banUntil > now;
+  }
+
   function isClientBanned(clientId, now = Date.now()) {
-    const banUntil = bannedClients.get(clientId);
-    if (banUntil === undefined) return false;
-    if (banUntil <= now) {
+    const ban = bannedClients.get(clientId);
+    if (!ban) return false;
+    if (!isActiveBan(ban, now)) {
       bannedClients.delete(clientId);
+      persistBans();
       return false;
     }
     return true;
   }
 
-  function registerReportAgainst(clientId, now = Date.now()) {
+  async function registerReportAgainst(clientId, details = {}, now = Date.now()) {
     const windowMs = LIMITS.autoBan.windowMs;
     const timestamps = (recentReportsByClient.get(clientId) ?? []).filter(
       (time) => now - time < windowMs,
@@ -528,9 +847,27 @@ function createChatServer({
     recentReportsByClient.set(clientId, timestamps);
 
     if (timestamps.length >= LIMITS.autoBan.reportThreshold) {
-      bannedClients.set(clientId, now + LIMITS.autoBan.banDurationMs);
+      bannedClients.set(
+        clientId,
+        createBanRecord(clientId, now + LIMITS.autoBan.banDurationMs, {
+          ...details,
+          action: 'automatic',
+          reason: 'Automatic suspension after repeated reports.',
+          appliedAt: new Date(now).toISOString(),
+        }),
+      );
       recentReportsByClient.delete(clientId);
       persistBans();
+      await recordModerationEvent({
+        type: 'automatic_ban',
+        actor: 'system',
+        clientId,
+        alias: details.alias || '',
+        reportId: details.reportId || null,
+        moderationAction: 'automatic',
+        reason: 'Automatic suspension after repeated reports.',
+        note: '',
+      });
       return true;
     }
     return false;
@@ -539,9 +876,14 @@ function createChatServer({
   function persistBans() {
     const now = Date.now();
     const entries = [];
-    for (const [clientId, banUntil] of bannedClients.entries()) {
-      if (banUntil > now) {
-        entries.push({ clientId, banUntil });
+    for (const [clientId, ban] of bannedClients.entries()) {
+      if (isActiveBan(ban, now)) {
+        entries.push({
+          ...ban,
+          clientId,
+          banUntil: ban.permanent ? undefined : ban.banUntil,
+          permanent: ban.permanent,
+        });
       } else {
         bannedClients.delete(clientId);
       }
@@ -549,17 +891,79 @@ function createChatServer({
     return banStore.save(entries).catch(logError);
   }
 
-  function removeBannedClient(clientId) {
+  function disconnectBannedClient(clientId, message) {
     for (const socket of io.sockets.sockets.values()) {
       if (socket.clientId !== clientId) continue;
       removeFromQueue(socket);
       handleLeaveRoom(socket);
-      sendError(
-        socket,
-        'banned',
-        'You can no longer chat right now because of multiple reports. Please try again later.',
-      );
+      sendError(socket, 'banned', message);
     }
+  }
+
+  function removeBannedClient(clientId) {
+    disconnectBannedClient(
+      clientId,
+      'You can no longer chat right now because of multiple reports. Please try again later.',
+    );
+  }
+
+  function listActiveBans() {
+    const now = Date.now();
+    const bans = [];
+    let pruned = false;
+    for (const [clientId, ban] of bannedClients.entries()) {
+      if (!isActiveBan(ban, now)) {
+        bannedClients.delete(clientId);
+        pruned = true;
+        continue;
+      }
+      bans.push({
+        ...copyValue(ban),
+        expiresAt: ban.permanent ? null : new Date(ban.banUntil).toISOString(),
+      });
+    }
+    if (pruned) persistBans();
+    return bans.sort((left, right) => {
+      if (left.permanent !== right.permanent) return left.permanent ? -1 : 1;
+      return Date.parse(right.appliedAt) - Date.parse(left.appliedAt);
+    });
+  }
+
+  async function liftBan(clientId) {
+    const ban = bannedClients.get(clientId);
+    if (!ban) return null;
+    bannedClients.delete(clientId);
+    recentReportsByClient.delete(clientId);
+    await persistBans();
+    return copyValue(ban);
+  }
+
+  async function applyModerationAction(report, action) {
+    if (action === 'none') return;
+
+    const clientId = report.reportedUser.clientId;
+    const details = {
+      alias: report.reportedUser.alias,
+      reason: report.reason,
+      action,
+      appliedAt: new Date().toISOString(),
+      reportId: report.id,
+    };
+
+    if (action === 'permanent_ban') {
+      bannedClients.set(clientId, createBanRecord(clientId, Number.POSITIVE_INFINITY, details));
+      await persistBans();
+      disconnectBannedClient(
+        clientId,
+        'Your access to GhostChat has been permanently revoked by moderation.',
+      );
+      return;
+    }
+
+    const banUntil = Date.now() + CHAT_BLOCK_DURATION_MS;
+    bannedClients.set(clientId, createBanRecord(clientId, banUntil, details));
+    await persistBans();
+    disconnectBannedClient(clientId, 'Chat access has been blocked for 24 hours by moderation.');
   }
 
   function log(message) {
@@ -573,6 +977,19 @@ function createChatServer({
   function logError(error) {
     if (typeof logger.error === 'function') {
       logger.error(error);
+    }
+  }
+
+  async function recordModerationEvent(event) {
+    try {
+      await auditStore.append({
+        id: crypto.randomUUID(),
+        occurredAt: new Date().toISOString(),
+        actor: 'admin',
+        ...event,
+      });
+    } catch (error) {
+      logError(error);
     }
   }
 
@@ -654,10 +1071,16 @@ function createChatServer({
       waiting,
       totalMatches: matches,
       averageMatchWaitMs: averageMatchWaitMs === null ? null : Math.round(averageMatchWaitMs),
-      activeBans: bannedClients.size,
+      activeBans: listActiveBans().length,
     });
   });
-  app.get('/admin', (request, response) => {
+  if (adminPath !== '/admin') {
+    app.get('/admin', (request, response) => {
+      response.sendStatus(404);
+    });
+  }
+  app.get(adminPath, (request, response) => {
+    response.set('Cache-Control', 'no-store');
     response.sendFile(path.join(__dirname, 'public', 'admin.html'));
   });
   app.get('/api/admin/reports', requireAdmin, async (request, response) => {
@@ -674,11 +1097,86 @@ function createChatServer({
       response.status(500).json({ error: 'Could not load reports.' });
     }
   });
+  app.get('/api/admin/reports/archive', requireAdmin, async (request, response) => {
+    try {
+      response.json({ reports: await reportStore.list('resolved') });
+    } catch (error) {
+      logError(error);
+      response.status(500).json({ error: 'Could not load resolved reports.' });
+    }
+  });
+  app.get('/api/admin/bans', requireAdmin, async (request, response) => {
+    try {
+      const reports = await reportStore.listAll();
+      const bans = listActiveBans().map((ban) => {
+        if (ban.alias && ban.reason) return ban;
+        const relatedReport = reports.find(
+          (report) => report.reportedUser?.clientId === ban.clientId,
+        );
+        return {
+          ...ban,
+          alias: ban.alias || relatedReport?.reportedUser?.alias || '',
+          reason: ban.reason || relatedReport?.reason || '',
+          reportId: ban.reportId || relatedReport?.id || null,
+        };
+      });
+      response.json({ bans });
+    } catch (error) {
+      logError(error);
+      response.status(500).json({ error: 'Could not load active bans.' });
+    }
+  });
+  app.get('/api/admin/audit-log', requireAdmin, async (request, response) => {
+    try {
+      const requestedLimit = Number.parseInt(request.query.limit, 10);
+      const limit = Number.isFinite(requestedLimit)
+        ? Math.min(Math.max(requestedLimit, 1), 500)
+        : 100;
+      response.json({ events: await auditStore.list(limit) });
+    } catch (error) {
+      logError(error);
+      response.status(500).json({ error: 'Could not load moderation log.' });
+    }
+  });
+  app.delete('/api/admin/bans/:clientId', requireAdmin, async (request, response) => {
+    try {
+      if (!isClientId(request.params.clientId)) {
+        response.status(400).json({ error: 'Invalid client ID.' });
+        return;
+      }
+      const liftedBan = await liftBan(request.params.clientId);
+      if (!liftedBan) {
+        response.status(404).json({ error: 'Active ban not found.' });
+        return;
+      }
+      await recordModerationEvent({
+        type: 'ban_lifted',
+        clientId: request.params.clientId,
+        alias: liftedBan.alias || '',
+        reportId: liftedBan.reportId || null,
+        moderationAction: liftedBan.action || 'automatic',
+        reason: liftedBan.reason || '',
+        note: '',
+      });
+      response.json({ clientId: request.params.clientId });
+    } catch (error) {
+      logError(error);
+      response.status(500).json({ error: 'Could not lift the ban.' });
+    }
+  });
   app.patch('/api/admin/reports/:id', requireAdmin, async (request, response) => {
     try {
-      const { status, moderationNote = '' } = request.body ?? {};
+      const { status, moderationNote = '', moderationAction = 'none' } = request.body ?? {};
       if (!REPORT_STATUSES.has(status)) {
         response.status(400).json({ error: 'Invalid report status.' });
+        return;
+      }
+      if (!MODERATION_ACTIONS.has(moderationAction)) {
+        response.status(400).json({ error: 'Invalid moderation action.' });
+        return;
+      }
+      if (moderationAction !== 'none' && status !== 'resolved') {
+        response.status(400).json({ error: 'Resolve the report before applying this action.' });
         return;
       }
       if (
@@ -689,20 +1187,116 @@ function createChatServer({
         return;
       }
 
+      const now = new Date().toISOString();
       const report = await reportStore.update(request.params.id, {
         status,
         moderationNote: cleanText(moderationNote),
-        reviewedAt: new Date().toISOString(),
+        moderationAction,
+        actionAppliedAt: moderationAction === 'none' ? null : now,
+        reviewedAt: now,
       });
       if (!report) {
         response.status(404).json({ error: 'Report not found.' });
         return;
       }
 
+      if (moderationAction !== 'none') {
+        await applyModerationAction(report, moderationAction);
+      }
+
+      await recordModerationEvent({
+        type: 'report_reviewed',
+        reportId: report.id,
+        clientId: report.reportedUser.clientId,
+        alias: report.reportedUser.alias,
+        moderationAction: report.moderationAction,
+        status: report.status,
+        reason: report.reason,
+        note: report.moderationNote,
+      });
+
       response.json({ report });
     } catch (error) {
       logError(error);
       response.status(500).json({ error: 'Could not update the report.' });
+    }
+  });
+  app.get('/api/admin/chats', requireAdmin, async (request, response) => {
+    try {
+      const requestedPage = Number.parseInt(request.query.page, 10);
+      const requestedPageSize = Number.parseInt(request.query.pageSize ?? request.query.limit, 10);
+      const page = Number.isFinite(requestedPage) ? Math.max(requestedPage, 1) : 1;
+      const pageSize = Number.isFinite(requestedPageSize)
+        ? Math.min(Math.max(requestedPageSize, 1), 100)
+        : 50;
+      const from = parseChatDateFilter(request.query.from);
+      const to = parseChatDateFilter(request.query.to, true);
+      if (Number.isNaN(from) || Number.isNaN(to)) {
+        response.status(400).json({ error: 'Invalid chat date filter.' });
+        return;
+      }
+      const query =
+        typeof request.query.q === 'string' ? cleanText(request.query.q).slice(0, 100) : '';
+      const result = await chatStore.list(pageSize, { query, from, to }, (page - 1) * pageSize);
+      response.json({
+        chats: result.chats,
+        page,
+        pageSize,
+        total: result.total,
+        totalPages: Math.max(1, Math.ceil(result.total / pageSize)),
+      });
+    } catch (error) {
+      logError(error);
+      response.status(500).json({ error: 'Could not load stored chats.' });
+    }
+  });
+  app.get('/api/admin/chats/export', requireAdmin, async (request, response) => {
+    try {
+      const from = parseChatDateFilter(request.query.from);
+      const to = parseChatDateFilter(request.query.to, true);
+      if (Number.isNaN(from) || Number.isNaN(to)) {
+        response.status(400).json({ error: 'Invalid chat date filter.' });
+        return;
+      }
+      const query =
+        typeof request.query.q === 'string' ? cleanText(request.query.q).slice(0, 100) : '';
+      const chats = (await chatStore.list(1000, { query, from, to })).chats;
+      const format = request.query.format === 'csv' ? 'csv' : 'json';
+      response.set('Content-Disposition', `attachment; filename="ghostchat-chats.${format}"`);
+      if (format === 'csv') {
+        response.type('text/csv; charset=utf-8').send(serializeChatsCsv(chats));
+        return;
+      }
+      response.type('application/json').send(JSON.stringify({ chats }, null, 2));
+    } catch (error) {
+      logError(error);
+      response.status(500).json({ error: 'Could not export stored chats.' });
+    }
+  });
+  app.get('/api/admin/chats/:id', requireAdmin, async (request, response) => {
+    try {
+      const chat = await chatStore.get(request.params.id);
+      if (!chat) {
+        response.status(404).json({ error: 'Chat not found.' });
+        return;
+      }
+      response.json({ chat });
+    } catch (error) {
+      logError(error);
+      response.status(500).json({ error: 'Could not load stored chat.' });
+    }
+  });
+  app.delete('/api/admin/chats/:id', requireAdmin, async (request, response) => {
+    try {
+      const chat = await chatStore.remove(request.params.id);
+      if (!chat) {
+        response.status(404).json({ error: 'Chat not found.' });
+        return;
+      }
+      response.json({ chat });
+    } catch (error) {
+      logError(error);
+      response.status(500).json({ error: 'Could not delete stored chat.' });
     }
   });
   app.use(express.static(path.join(__dirname, 'public')));
@@ -804,6 +1398,19 @@ function createChatServer({
       if (hasSharedInterest) return index;
     }
 
+    // The public form no longer asks for interests, so language-compatible visitors
+    // should not wait for the fallback timer just because both lists are empty.
+    for (let index = startIndex; index < waitingQueue.length; index++) {
+      const user2 = waitingQueue[index];
+      if (
+        !user2.disconnected &&
+        canMatch(user1, user2) &&
+        hasCompatibleLanguage(user1, user2) &&
+        (!user1.interests.length || !user2.interests.length)
+      )
+        return index;
+    }
+
     const user1WaitedLongEnough = now - user1.joinTime >= LIMITS.fallbackMatchMs;
     for (let index = startIndex; index < waitingQueue.length; index++) {
       const user2 = waitingQueue[index];
@@ -886,6 +1493,17 @@ function createChatServer({
       recordMatchWait(user1, user2, now);
 
       const roomId = crypto.randomUUID();
+      const startedAt = new Date().toISOString();
+      chatStore
+        .start({
+          id: roomId,
+          startedAt,
+          participants: [
+            { clientId: user1.clientId, alias: user1.username },
+            { clientId: user2.clientId, alias: user2.username },
+          ],
+        })
+        .catch(logError);
       user1.join(roomId);
       user2.join(roomId);
       user1.currentRoom = roomId;
@@ -938,6 +1556,7 @@ function createChatServer({
     if (!socket.currentRoom) return;
 
     const roomId = socket.currentRoom;
+    chatStore.finish(roomId).catch(logError);
     const partner = socket.partner;
     socket.leave(roomId);
     socket.currentRoom = null;
@@ -1005,6 +1624,10 @@ function createChatServer({
       (b) =>
         dCanMatch(a, b) &&
         dCompatibleLanguage(a, b) &&
+        (!a.interests.length || !b.interests.length),
+      (b) =>
+        dCanMatch(a, b) &&
+        dCompatibleLanguage(a, b) &&
         (aWaited || now - b.joinTime >= LIMITS.fallbackMatchMs),
       (b) => dCanMatch(a, b) && (aWaited || now - b.joinTime >= LIMITS.fallbackMatchMs),
     ];
@@ -1054,6 +1677,17 @@ function createChatServer({
 
         const roomId = crypto.randomUUID();
         const members = [a, b];
+        const startedAt = new Date().toISOString();
+        chatStore
+          .start({
+            id: roomId,
+            startedAt,
+            participants: [
+              { clientId: a.clientId, alias: a.username },
+              { clientId: b.clientId, alias: b.username },
+            ],
+          })
+          .catch(logError);
         await redisCmd.set(REDIS_KEYS.room(roomId), JSON.stringify(members), {
           EX: ROOM_TTL_SECONDS,
         });
@@ -1078,6 +1712,16 @@ function createChatServer({
 
   // Apply a match to whichever of the two members is connected to THIS instance.
   function applyMatchAssignment({ roomId, members }) {
+    chatStore
+      .start({
+        id: roomId,
+        startedAt: new Date().toISOString(),
+        participants: members.map((member) => ({
+          clientId: member.clientId,
+          alias: member.username,
+        })),
+      })
+      .catch(logError);
     for (const member of members) {
       const socket = io.sockets.sockets.get(member.socketId);
       if (!socket) continue; // owned by another instance
@@ -1107,6 +1751,7 @@ function createChatServer({
   // Clean up and notify the partner of a room on THIS instance (idempotent; the partner lives
   // on exactly one instance). Called locally and via the serverSideEmit control channel.
   function notifyPartnerLeft(roomId, leaverSocketId) {
+    chatStore.finish(roomId).catch(logError);
     for (const socket of io.sockets.sockets.values()) {
       if (socket.currentRoom === roomId && socket.id !== leaverSocketId) {
         socket.leave(roomId);
@@ -1120,6 +1765,7 @@ function createChatServer({
   function dHandleLeaveRoom(socket) {
     const roomId = socket.currentRoom;
     if (!roomId) return;
+    chatStore.finish(roomId).catch(logError);
 
     socket.leave(roomId);
     socket.currentRoom = null;
@@ -1195,6 +1841,9 @@ function createChatServer({
       logError(error);
     }
   });
+  io.on('anon:mm:chat_message', ({ roomId, message }) => {
+    chatStore.appendMessage(roomId, message).catch(logError);
+  });
 
   io.on('connection', (socket) => {
     socket.color = COLORS[Math.floor(Math.random() * COLORS.length)];
@@ -1264,14 +1913,31 @@ function createChatServer({
           return;
         }
 
-        io.to(socket.currentRoom).emit('message', {
+        const roomId = socket.currentRoom;
+        const messageId = crypto.randomUUID();
+        const text = maskProfanity(parsed.value);
+        io.to(roomId).emit('message', {
           type: 'chat',
-          id: crypto.randomUUID(),
+          id: messageId,
           username: socket.username,
           color: socket.color,
-          text: maskProfanity(parsed.value),
+          text,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         });
+        const storedMessage = {
+          id: messageId,
+          clientId: socket.clientId,
+          username: socket.username,
+          text,
+          timestamp: new Date().toISOString(),
+        };
+        chatStore.appendMessage(roomId, storedMessage).catch(logError);
+        if (distributedEnabled()) {
+          io.serverSideEmit('anon:mm:chat_message', {
+            roomId,
+            message: storedMessage,
+          });
+        }
       }),
     );
 
@@ -1382,20 +2048,29 @@ function createChatServer({
         }
 
         const partner = socket.partnerInfo;
+        const chatId = socket.currentRoom;
         const report = await reportStore.append({
           id: crypto.randomUUID(),
           createdAt: new Date().toISOString(),
+          chatId,
           reporter: { alias: socket.username, clientId: socket.clientId },
           reportedUser: { alias: partner.username, clientId: partner.clientId },
           reason: parsed.value,
           status: 'new',
           moderationNote: '',
+          moderationAction: 'none',
+          actionAppliedAt: null,
           reviewedAt: null,
         });
         logReport(report);
         socket.emit('report_received');
 
-        if (registerReportAgainst(partner.clientId)) {
+        if (
+          await registerReportAgainst(partner.clientId, {
+            alias: partner.username,
+            reportId: report.id,
+          })
+        ) {
           log(`Auto-banned client after reaching the report threshold.`);
           removeBannedClient(partner.clientId);
           broadcastQueueStatus();
@@ -1415,7 +2090,15 @@ function createChatServer({
     .load()
     .then((entries) => {
       for (const entry of entries) {
-        bannedClients.set(entry.clientId, entry.banUntil);
+        if (!isClientId(entry.clientId)) continue;
+        bannedClients.set(
+          entry.clientId,
+          createBanRecord(
+            entry.clientId,
+            entry.permanent === true ? Number.POSITIVE_INFINITY : entry.banUntil,
+            entry,
+          ),
+        );
       }
       log(`Loaded ${entries.length} active ban(s) from storage.`);
     })
@@ -1446,6 +2129,8 @@ function createChatServer({
         connectionRateLimiter.stop();
         io.close(async (error) => {
           try {
+            await chatStore.flush();
+            await auditStore.flush();
             if (redisClients) {
               await Promise.all([
                 redisClients.pubClient.quit(),

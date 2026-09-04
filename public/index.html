@@ -12,7 +12,7 @@
       rel="stylesheet"
       href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
     />
-    <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="style.css?v=2" />
   </head>
   <body>
     <div class="app-container">
@@ -46,176 +46,99 @@
       <main class="chat-interface">
         <!-- LOGIN SCREEN -->
         <div id="login-screen" class="screen active">
-          <div class="login-card">
-            <div class="logo-large">
-              <i class="fa-solid fa-ghost"></i>
-              <h1>GhostChat</h1>
-            </div>
-            <p class="subtitle" data-i18n="subtitle">
-              Enter your alias and interests to find a chat partner.
-            </p>
-            <form id="login-form">
-              <input
-                type="text"
-                id="username-input"
-                data-i18n-placeholder="alias_placeholder"
-                placeholder="Your Alias..."
-                required
-                autocomplete="off"
-                maxlength="20"
-              />
-              <div class="custom-select" id="language-select">
-                <button
-                  type="button"
-                  id="language-trigger"
-                  class="custom-select-trigger"
-                  aria-haspopup="listbox"
-                  aria-expanded="false"
-                  data-i18n-title="lang_pref_label"
-                  aria-label="Language preference"
+          <div class="login-layout">
+            <section class="login-intro" aria-label="GhostChat introduction">
+              <p class="intro-kicker" data-i18n="intro_kicker">A small room for big ideas</p>
+              <h2 data-i18n="intro_heading">Meet someone outside your usual orbit.</h2>
+              <p class="intro-copy" data-i18n="intro_copy">
+                Drop in, share what you are into, and let a better conversation find you.
+              </p>
+              <div class="intro-points">
+                <span
+                  ><i class="fa-solid fa-wand-magic-sparkles"></i
+                  ><span data-i18n="intro_point_match">Interest-led matching</span></span
                 >
-                  <span id="language-value">Any language</span>
-                  <i class="fa-solid fa-chevron-down"></i>
-                </button>
-                <ul id="language-options" class="custom-select-options" role="listbox" hidden>
-                  <li
-                    class="custom-select-option"
-                    role="option"
-                    data-value="any"
-                    data-i18n="lang_any"
-                  >
-                    Any language
-                  </li>
-                  <li class="custom-select-option" role="option" data-value="vi">Tiếng Việt</li>
-                  <li class="custom-select-option" role="option" data-value="en">English</li>
-                </ul>
-                <input type="hidden" id="language-input" value="any" />
+                <span
+                  ><i class="fa-solid fa-shield-heart"></i
+                  ><span data-i18n="intro_point_safe">Built-in safety controls</span></span
+                >
+                <span
+                  ><i class="fa-solid fa-user-secret"></i
+                  ><span data-i18n="intro_point_private">No account required</span></span
+                >
               </div>
-              <div class="interest-picker">
-                <input
-                  type="text"
-                  id="interests-input"
-                  data-i18n-placeholder="interests_placeholder"
-                  placeholder="Interests (e.g., anime, code, music)"
-                  autocomplete="off"
-                  maxlength="200"
-                />
-                <p id="interest-hint" class="interest-hint" data-i18n="interest_hint">
-                  Pick a few or type your own.
-                </p>
-                <div class="interest-options" aria-labelledby="interest-hint">
-                  <button
-                    type="button"
-                    class="interest-option"
-                    data-interest="anime"
-                    data-i18n="int_anime"
-                    aria-pressed="false"
-                  >
-                    Anime
-                  </button>
-                  <button
-                    type="button"
-                    class="interest-option"
-                    data-interest="music"
-                    data-i18n="int_music"
-                    aria-pressed="false"
-                  >
-                    Music
-                  </button>
-                  <button
-                    type="button"
-                    class="interest-option"
-                    data-interest="gaming"
-                    data-i18n="int_gaming"
-                    aria-pressed="false"
-                  >
-                    Gaming
-                  </button>
-                  <button
-                    type="button"
-                    class="interest-option"
-                    data-interest="movies"
-                    data-i18n="int_movies"
-                    aria-pressed="false"
-                  >
-                    Movies
-                  </button>
-                  <button
-                    type="button"
-                    class="interest-option"
-                    data-interest="coding"
-                    data-i18n="int_coding"
-                    aria-pressed="false"
-                  >
-                    Coding
-                  </button>
-                  <button
-                    type="button"
-                    class="interest-option"
-                    data-interest="travel"
-                    data-i18n="int_travel"
-                    aria-pressed="false"
-                  >
-                    Travel
-                  </button>
-                  <button
-                    type="button"
-                    class="interest-option"
-                    data-interest="books"
-                    data-i18n="int_books"
-                    aria-pressed="false"
-                  >
-                    Books
-                  </button>
-                  <button
-                    type="button"
-                    class="interest-option"
-                    data-interest="fitness"
-                    data-i18n="int_fitness"
-                    aria-pressed="false"
-                  >
-                    Fitness
-                  </button>
-                  <button
-                    type="button"
-                    class="interest-option"
-                    data-interest="food"
-                    data-i18n="int_food"
-                    aria-pressed="false"
-                  >
-                    Food
-                  </button>
-                  <button
-                    type="button"
-                    class="interest-option"
-                    data-interest="art"
-                    data-i18n="int_art"
-                    aria-pressed="false"
-                  >
-                    Art
-                  </button>
+            </section>
+
+            <div class="login-card">
+              <div class="logo-large">
+                <span class="logo-mark"><i class="fa-solid fa-ghost"></i></span>
+                <div>
+                  <p class="logo-overline">GHOSTCHAT</p>
+                  <h1>Start a conversation</h1>
                 </div>
               </div>
-              <section class="safety-notice" aria-labelledby="safety-title">
-                <h2 id="safety-title" data-i18n="safety_title">A safer anonymous chat</h2>
-                <p data-i18n="safety_text">
-                  Be kind. No harassment, scams, hate, or explicit content. Chats are not saved, but
-                  reports are reviewed by moderators.
-                </p>
-                <label class="safety-check">
-                  <input id="age-confirmation" type="checkbox" required />
-                  <span data-i18n="age_confirm">I confirm that I am 18 or older.</span>
-                </label>
-                <label class="safety-check">
-                  <input id="rules-confirmation" type="checkbox" required />
-                  <span data-i18n="rules_confirm">I agree to follow the Community Rules.</span>
-                </label>
-              </section>
-              <button type="submit" class="btn-primary" data-i18n="start_btn">
-                Start Chatting
-              </button>
-            </form>
-            <p id="login-error" class="form-error" role="status" aria-live="polite" hidden></p>
+              <p class="subtitle" data-i18n="subtitle">
+                Enter your alias and choose a language to find a chat partner.
+              </p>
+              <form id="login-form">
+                <input
+                  type="text"
+                  id="username-input"
+                  data-i18n-placeholder="alias_placeholder"
+                  placeholder="Your Alias..."
+                  required
+                  autocomplete="off"
+                  maxlength="20"
+                />
+                <div class="custom-select" id="language-select">
+                  <button
+                    type="button"
+                    id="language-trigger"
+                    class="custom-select-trigger"
+                    aria-haspopup="listbox"
+                    aria-expanded="false"
+                    data-i18n-title="lang_pref_label"
+                    aria-label="Language preference"
+                  >
+                    <span id="language-value">Any language</span>
+                    <i class="fa-solid fa-chevron-down"></i>
+                  </button>
+                  <ul id="language-options" class="custom-select-options" role="listbox" hidden>
+                    <li
+                      class="custom-select-option"
+                      role="option"
+                      data-value="any"
+                      data-i18n="lang_any"
+                    >
+                      Any language
+                    </li>
+                    <li class="custom-select-option" role="option" data-value="vi">Tiếng Việt</li>
+                    <li class="custom-select-option" role="option" data-value="en">English</li>
+                  </ul>
+                  <input type="hidden" id="language-input" value="any" />
+                </div>
+                <input type="hidden" id="interests-input" value="" />
+                <section class="safety-notice" aria-labelledby="safety-title">
+                  <h2 id="safety-title" data-i18n="safety_title">A safer anonymous chat</h2>
+                  <p data-i18n="safety_text">
+                    Be kind. No harassment, scams, hate, or explicit content. Chats may be stored
+                    for moderator review, and reports are reviewed by moderators.
+                  </p>
+                  <label class="safety-check">
+                    <input id="age-confirmation" type="checkbox" required />
+                    <span data-i18n="age_confirm">I confirm that I am 18 or older.</span>
+                  </label>
+                  <label class="safety-check">
+                    <input id="rules-confirmation" type="checkbox" required />
+                    <span data-i18n="rules_confirm">I agree to follow the Community Rules.</span>
+                  </label>
+                </section>
+                <button type="submit" class="btn-primary" data-i18n="start_btn">
+                  Start Chatting
+                </button>
+              </form>
+              <p id="login-error" class="form-error" role="status" aria-live="polite" hidden></p>
+            </div>
           </div>
           <button
             id="manage-blocks-btn"

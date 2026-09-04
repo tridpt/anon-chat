@@ -5,22 +5,57 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="robots" content="noindex, nofollow" />
     <title>GhostChat Moderation</title>
-    <link rel="stylesheet" href="admin.css" />
+    <link rel="stylesheet" href="admin.css?v=2" />
   </head>
   <body>
     <main class="admin-shell">
       <header class="admin-header">
-        <div>
-          <p class="eyebrow">GhostChat</p>
+        <div class="brand-lockup">
+          <p class="eyebrow">GhostChat / Console</p>
           <h1>Moderation inbox</h1>
+          <p class="header-subtitle">
+            Review reports and jump straight into the conversation behind each case.
+          </p>
         </div>
-        <a href="/" class="back-link">Back to chat</a>
+        <div class="header-actions">
+          <span class="secure-pill"><span aria-hidden="true">●</span> Protected</span>
+          <a href="/" class="back-link">Exit console <span aria-hidden="true">↗</span></a>
+        </div>
       </header>
 
+      <section class="stats-grid" aria-label="Moderation overview">
+        <article class="stat-card">
+          <span class="stat-label">Open reports</span>
+          <strong id="stat-open-reports">—</strong>
+          <span class="stat-caption">Needs moderator review</span>
+        </article>
+        <article class="stat-card">
+          <span class="stat-label">Linked cases</span>
+          <strong id="stat-linked-reports">—</strong>
+          <span class="stat-caption">Reports with a transcript</span>
+        </article>
+        <article class="stat-card">
+          <span class="stat-label">Resolved archive</span>
+          <strong id="stat-resolved-reports">—</strong>
+          <span class="stat-caption">Closed moderation cases</span>
+        </article>
+        <article class="stat-card">
+          <span class="stat-label">Stored chats</span>
+          <strong id="stat-stored-chats">—</strong>
+          <span class="stat-caption">Available in the archive</span>
+        </article>
+        <article class="stat-card">
+          <span class="stat-label">Active bans</span>
+          <strong id="stat-active-bans">—</strong>
+          <span class="stat-caption">Currently restricted clients</span>
+        </article>
+      </section>
+
       <section class="panel token-panel" aria-labelledby="token-title">
-        <div>
-          <h2 id="token-title">Admin access</h2>
-          <p>The token stays in this browser session only.</p>
+        <div class="token-copy">
+          <span class="section-kicker">Session access</span>
+          <h2 id="token-title">Unlock moderation tools</h2>
+          <p>Your admin token stays in this browser session only.</p>
         </div>
         <form id="token-form" class="token-form">
           <label class="sr-only" for="admin-token">Admin token</label>
@@ -28,29 +63,111 @@
             id="admin-token"
             type="password"
             autocomplete="off"
-            placeholder="ADMIN_TOKEN"
+            placeholder="Paste ADMIN_TOKEN"
             required
           />
-          <button type="submit">Unlock</button>
+          <button type="submit">Unlock access</button>
           <button id="clear-token" type="button" class="secondary">Clear</button>
         </form>
       </section>
 
-      <section class="toolbar" aria-label="Report controls">
-        <label for="status-filter">Show</label>
-        <select id="status-filter">
-          <option value="">All reports</option>
-          <option value="new">New</option>
-          <option value="reviewed">Reviewed</option>
-          <option value="resolved">Resolved</option>
-        </select>
-        <button id="refresh-reports" type="button" class="secondary">Refresh</button>
-        <p id="admin-status" role="status" aria-live="polite"></p>
+      <div class="admin-status-row">
+        <span class="status-dot" aria-hidden="true"></span>
+        <p id="admin-status" class="admin-status" role="status" aria-live="polite">
+          Enter your token to load moderation data.
+        </p>
+      </div>
+
+      <section class="admin-section" aria-labelledby="reports-title">
+        <div class="section-heading">
+          <div>
+            <span class="section-kicker">Queue</span>
+            <h2 id="reports-title">Reports</h2>
+            <p>
+              Review the reason, open the linked transcript, and record an outcome. Actions apply
+              when status is Resolved.
+            </p>
+          </div>
+          <div class="section-tools" aria-label="Report controls">
+            <label for="status-filter">Status</label>
+            <select id="status-filter">
+              <option value="">All reports</option>
+              <option value="new">New</option>
+              <option value="reviewed">Reviewed</option>
+            </select>
+            <button id="refresh-reports" type="button" class="secondary">Refresh</button>
+          </div>
+        </div>
+        <section id="reports" class="report-list" aria-live="polite"></section>
       </section>
 
-      <section id="reports" class="report-list" aria-live="polite"></section>
+      <section class="admin-section archive-section" aria-labelledby="resolved-title">
+        <div class="section-heading">
+          <div>
+            <span class="section-kicker">History</span>
+            <h2 id="resolved-title">Resolved archive</h2>
+            <p>Closed cases are kept separately from the active moderation queue.</p>
+          </div>
+          <button id="refresh-resolved" type="button" class="secondary">Refresh archive</button>
+        </div>
+        <section id="resolved-reports" class="report-list" aria-live="polite"></section>
+      </section>
+
+      <section class="admin-section ban-section" aria-labelledby="bans-title">
+        <div class="section-heading">
+          <div>
+            <span class="section-kicker">Access control</span>
+            <h2 id="bans-title">Ban monitor</h2>
+            <p>Review active restrictions and lift a ban when the case is reconsidered.</p>
+          </div>
+          <button id="refresh-bans" type="button" class="secondary">Refresh bans</button>
+        </div>
+        <section id="bans" class="ban-list" aria-live="polite"></section>
+      </section>
+
+      <section class="admin-section audit-section" aria-labelledby="audit-title">
+        <div class="section-heading">
+          <div>
+            <span class="section-kicker">Accountability</span>
+            <h2 id="audit-title">Moderation log</h2>
+            <p>Review moderation decisions and ban changes recorded by the console.</p>
+          </div>
+          <button id="refresh-audit" type="button" class="secondary">Refresh log</button>
+        </div>
+        <section id="audit-log" class="audit-list" aria-live="polite"></section>
+      </section>
+
+      <section class="admin-section" aria-labelledby="chats-title">
+        <div class="section-heading">
+          <div>
+            <span class="section-kicker">Archive</span>
+            <h2 id="chats-title">Stored chats</h2>
+            <p>Search, export, or remove retained transcripts.</p>
+          </div>
+          <div class="section-tools archive-actions" aria-label="Archive actions">
+            <button id="refresh-chats" type="button" class="secondary">Refresh</button>
+            <button id="export-json" type="button" class="secondary">Export JSON</button>
+            <button id="export-csv" type="button" class="secondary">Export CSV</button>
+          </div>
+        </div>
+        <form id="chat-filter-form" class="archive-filter">
+          <label class="sr-only" for="chat-search">Search chats</label>
+          <input id="chat-search" type="search" placeholder="Search alias or message" />
+          <label class="sr-only" for="chat-from">From date</label>
+          <input id="chat-from" type="date" aria-label="From date" />
+          <label class="sr-only" for="chat-to">To date</label>
+          <input id="chat-to" type="date" aria-label="To date" />
+          <button type="submit">Search archive</button>
+        </form>
+        <section id="chats" class="report-list" aria-live="polite"></section>
+        <nav id="chat-pagination" class="pagination" aria-label="Stored chat pages" hidden>
+          <button id="previous-chat-page" type="button" class="secondary">Previous</button>
+          <span id="chat-page-status" aria-live="polite"></span>
+          <button id="next-chat-page" type="button" class="secondary">Next</button>
+        </nav>
+      </section>
     </main>
 
-    <script src="admin.js"></script>
+    <script src="admin.js?v=4"></script>
   </body>
 </html>

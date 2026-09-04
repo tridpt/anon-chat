@@ -4,7 +4,13 @@
 
   const STRINGS = {
     en: {
-      subtitle: 'Enter your alias and interests to find a chat partner.',
+      intro_kicker: 'A small room for big ideas',
+      intro_heading: 'Meet someone outside your usual orbit.',
+      intro_copy: 'Drop in, share what you are into, and let a better conversation find you.',
+      intro_point_match: 'Instant one-on-one matching',
+      intro_point_safe: 'Built-in safety controls',
+      intro_point_private: 'No account required',
+      subtitle: 'Enter your alias and choose a language to find a chat partner.',
       alias_placeholder: 'Your Alias...',
       lang_pref_label: 'Language preference',
       lang_any: 'Any language',
@@ -22,7 +28,7 @@
       int_art: 'Art',
       safety_title: 'A safer anonymous chat',
       safety_text:
-        'Be kind. No harassment, scams, hate, or explicit content. Chats are not saved, but reports are reviewed by moderators.',
+        'Be kind. No harassment, scams, hate, or explicit content. Chats may be stored for moderator review, and reports are reviewed by moderators.',
       age_confirm: 'I confirm that I am 18 or older.',
       rules_confirm: 'I agree to follow the Community Rules.',
       start_btn: 'Start Chatting',
@@ -94,7 +100,13 @@
       err_server_error: 'Something went wrong. Please try again.',
     },
     vi: {
-      subtitle: 'Nhập biệt danh và sở thích để tìm người trò chuyện.',
+      intro_kicker: 'Một góc nhỏ cho những ý tưởng lớn',
+      intro_heading: 'Gặp một người mới, ngoài vùng quen thuộc.',
+      intro_copy: 'Chia sẻ điều bạn thích, rồi để một cuộc trò chuyện thú vị tìm đến bạn.',
+      intro_point_match: 'Ghép đôi trò chuyện tức thì',
+      intro_point_safe: 'Tích hợp công cụ an toàn',
+      intro_point_private: 'Không cần tạo tài khoản',
+      subtitle: 'Nhập biệt danh và chọn ngôn ngữ để tìm người trò chuyện.',
       alias_placeholder: 'Biệt danh của bạn...',
       lang_pref_label: 'Ngôn ngữ ưu tiên',
       lang_any: 'Mọi ngôn ngữ',
@@ -112,7 +124,7 @@
       int_art: 'Nghệ thuật',
       safety_title: 'Trò chuyện ẩn danh an toàn hơn',
       safety_text:
-        'Hãy tử tế. Không quấy rối, lừa đảo, thù ghét hay nội dung nhạy cảm. Cuộc trò chuyện không được lưu, nhưng báo cáo sẽ được kiểm duyệt viên xem xét.',
+        'Hãy tử tế. Không quấy rối, lừa đảo, thù ghét hay nội dung nhạy cảm. Cuộc trò chuyện có thể được lưu để kiểm duyệt viên xem xét, và báo cáo cũng sẽ được xem xét.',
       age_confirm: 'Tôi xác nhận mình từ 18 tuổi trở lên.',
       rules_confirm: 'Tôi đồng ý tuân theo Quy tắc Cộng đồng.',
       start_btn: 'Bắt đầu trò chuyện',

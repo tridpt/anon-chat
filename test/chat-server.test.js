@@ -22,9 +22,12 @@ function waitForEvent(socket, event, timeoutMs = 1_500) {
   });
 }
 
-async function createTestServer(t, { logger = { info() {}, error() {} }, adminToken } = {}) {
+async function createTestServer(
+  t,
+  { logger = { info() {}, error() {} }, adminToken, adminPath = '/admin' } = {},
+) {
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'anon-chat-test-'));
-  const chat = createChatServer({ logger, dataDir, adminToken });
+  const chat = createChatServer({ logger, dataDir, adminToken: adminToken ?? '', adminPath });
   await new Promise((resolve, reject) => {
     chat.server.once('error', reject);
     chat.server.listen(0, '127.0.0.1', resolve);
@@ -257,6 +260,7 @@ test('accepts a report and writes a structured moderation log entry', async (t) 
   assert.equal(report.reporter.alias, 'Alice');
   assert.equal(report.reportedUser.alias, 'Bob');
   assert.equal(report.reason, 'Harassment or bullying: Repeated insults');
+  assert.match(report.chatId, /^[0-9a-f-]{36}$/i);
   assert.match(report.createdAt, /^\d{4}-\d{2}-\d{2}T/);
 });
 
@@ -291,6 +295,18 @@ test('persists reports and requires an admin token to review them', async (t) =>
   assert.equal(reports.length, 1);
   assert.equal(reports[0].status, 'new');
   assert.equal(reports[0].reason, 'Spam or scam');
+  assert.match(reports[0].chatId, /^[0-9a-f-]{36}$/i);
+  const linkedTranscript = await fetch(
+    `${url}/api/admin/chats/${encodeURIComponent(reports[0].chatId)}`,
+    { headers },
+  );
+  assert.equal(linkedTranscript.status, 200);
+  const linkedChat = (await linkedTranscript.json()).chat;
+  assert.equal(linkedChat.id, reports[0].chatId);
+  assert.deepEqual(linkedChat.participants.map((participant) => participant.alias).sort(), [
+    'Alice',
+    'Bob',
+  ]);
 
   const reviewed = await fetch(`${url}/api/admin/reports/${reports[0].id}`, {
     method: 'PATCH',
@@ -302,6 +318,196 @@ test('persists reports and requires an admin token to review them', async (t) =>
   assert.equal(report.status, 'resolved');
   assert.equal(report.moderationNote, 'Blocked repeat spammer.');
   assert.match(report.reviewedAt, /^\d{4}-\d{2}-\d{2}T/);
+
+  const auditAfterReview = await fetch(`${url}/api/admin/audit-log`, { headers });
+  assert.equal(auditAfterReview.status, 200);
+  const reviewEvents = (await auditAfterReview.json()).events;
+  assert.equal(reviewEvents.length, 1);
+  assert.deepEqual(
+    {
+      type: reviewEvents[0].type,
+      reportId: reviewEvents[0].reportId,
+      clientId: reviewEvents[0].clientId,
+      moderationAction: reviewEvents[0].moderationAction,
+    },
+    {
+      type: 'report_reviewed',
+      reportId: reports[0].id,
+      clientId: 'client-bob-123456',
+      moderationAction: 'none',
+    },
+  );
+
+  const activeAfterResolve = await fetch(`${url}/api/admin/reports`, { headers });
+  assert.deepEqual((await activeAfterResolve.json()).reports, []);
+  const archived = await fetch(`${url}/api/admin/reports/archive`, { headers });
+  assert.equal(archived.status, 200);
+  assert.deepEqual(
+    (await archived.json()).reports.map((item) => item.id),
+    [reports[0].id],
+  );
+
+  const bobBlocked = waitForEvent(bob, 'app_error');
+  const blocked = await fetch(`${url}/api/admin/reports/${reports[0].id}`, {
+    method: 'PATCH',
+    headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      status: 'resolved',
+      moderationNote: 'Temporary chat restriction.',
+      moderationAction: 'chat_block',
+    }),
+  });
+  assert.equal(blocked.status, 200);
+  assert.equal((await blocked.json()).report.moderationAction, 'chat_block');
+  assert.equal((await bobBlocked).code, 'banned');
+
+  const permanentlyBanned = await fetch(`${url}/api/admin/reports/${reports[0].id}`, {
+    method: 'PATCH',
+    headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      status: 'resolved',
+      moderationNote: 'Permanent removal.',
+      moderationAction: 'permanent_ban',
+    }),
+  });
+  assert.equal(permanentlyBanned.status, 200);
+  assert.equal((await permanentlyBanned.json()).report.moderationAction, 'permanent_ban');
+
+  const activeBans = await fetch(`${url}/api/admin/bans`, { headers });
+  assert.equal(activeBans.status, 200);
+  const { bans } = await activeBans.json();
+  assert.equal(bans.length, 1);
+  assert.deepEqual(
+    {
+      clientId: bans[0].clientId,
+      alias: bans[0].alias,
+      permanent: bans[0].permanent,
+      action: bans[0].action,
+    },
+    {
+      clientId: 'client-bob-123456',
+      alias: 'Bob',
+      permanent: true,
+      action: 'permanent_ban',
+    },
+  );
+
+  const bobReturning = await connectClient(t, url);
+  const rejected = waitForEvent(bobReturning, 'app_error');
+  login(bobReturning, { username: 'Bob', interests: 'books', clientId: 'client-bob-123456' });
+  assert.equal((await rejected).code, 'banned');
+
+  const lifted = await fetch(`${url}/api/admin/bans/client-bob-123456`, {
+    method: 'DELETE',
+    headers,
+  });
+  assert.equal(lifted.status, 200);
+  const noActiveBans = await fetch(`${url}/api/admin/bans`, { headers });
+  assert.deepEqual((await noActiveBans.json()).bans, []);
+
+  const auditAfterLift = await fetch(`${url}/api/admin/audit-log?limit=10`, { headers });
+  assert.equal(auditAfterLift.status, 200);
+  const auditEvents = (await auditAfterLift.json()).events;
+  assert.equal(auditEvents.length, 4);
+  assert.equal(auditEvents[0].type, 'ban_lifted');
+  assert.equal(auditEvents[0].clientId, 'client-bob-123456');
+  assert.equal(auditEvents[1].moderationAction, 'permanent_ban');
+  assert.equal(auditEvents[2].moderationAction, 'chat_block');
+
+  const bobUnbanned = await connectClient(t, url);
+  const queued = waitForEvent(bobUnbanned, 'queued');
+  login(bobUnbanned, { username: 'Bob', interests: 'books', clientId: 'client-bob-123456' });
+  await queued;
+});
+
+test('persists chat messages and exposes them only to admins', async (t) => {
+  const adminToken = 'test-admin-token-123';
+  const url = await createTestServer(t, { adminToken });
+  const alice = await connectClient(t, url);
+  const bob = await connectClient(t, url);
+
+  const aliceMatched = waitForEvent(alice, 'matched');
+  const bobMatched = waitForEvent(bob, 'matched');
+  login(alice, { username: 'Alice', interests: 'books', clientId: 'client-alice-12345' });
+  login(bob, { username: 'Bob', interests: 'books', clientId: 'client-bob-123456' });
+  await Promise.all([aliceMatched, bobMatched]);
+
+  const received = waitForEvent(bob, 'message');
+  alice.emit('chatMessage', 'A stored hello - Xin chào tiếng Việt');
+  const message = await received;
+  assert.equal(message.text, 'A stored hello - Xin chào tiếng Việt');
+
+  assert.equal((await fetch(`${url}/api/admin/chats`)).status, 401);
+  const headers = { Authorization: `Bearer ${adminToken}` };
+  let chats = [];
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const response = await fetch(`${url}/api/admin/chats`, { headers });
+    assert.equal(response.status, 200);
+    chats = (await response.json()).chats;
+    if (chats[0]?.messages?.length) break;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+
+  assert.equal(chats.length, 1);
+  const paged = await fetch(`${url}/api/admin/chats?page=1&pageSize=1`, { headers });
+  const pageData = await paged.json();
+  assert.deepEqual(
+    {
+      page: pageData.page,
+      pageSize: pageData.pageSize,
+      total: pageData.total,
+      totalPages: pageData.totalPages,
+    },
+    { page: 1, pageSize: 1, total: 1, totalPages: 1 },
+  );
+  assert.deepEqual(chats[0].participants.map((participant) => participant.alias).sort(), [
+    'Alice',
+    'Bob',
+  ]);
+  assert.equal(chats[0].messages[0].text, 'A stored hello - Xin chào tiếng Việt');
+  const detail = await fetch(`${url}/api/admin/chats/${encodeURIComponent(chats[0].id)}`, {
+    headers,
+  });
+  assert.equal(detail.status, 200);
+  assert.equal((await detail.json()).chat.messages[0].id, message.id);
+
+  const searched = await fetch(`${url}/api/admin/chats?q=stored`, { headers });
+  assert.equal((await searched.json()).chats.length, 1);
+  const aliasSearch = await fetch(`${url}/api/admin/chats?q=Bob`, { headers });
+  assert.equal((await aliasSearch.json()).chats.length, 1);
+  const missed = await fetch(`${url}/api/admin/chats?q=missing`, { headers });
+  assert.equal((await missed.json()).chats.length, 0);
+  assert.equal((await fetch(`${url}/api/admin/chats?from=not-a-date`, { headers })).status, 400);
+
+  const jsonExport = await fetch(`${url}/api/admin/chats/export?format=json&q=stored`, { headers });
+  assert.equal(jsonExport.status, 200);
+  assert.match(jsonExport.headers.get('content-disposition'), /ghostchat-chats\.json/);
+  assert.equal((await jsonExport.json()).chats.length, 1);
+  const csvExport = await fetch(`${url}/api/admin/chats/export?format=csv&q=stored`, { headers });
+  assert.equal(csvExport.status, 200);
+  assert.match(csvExport.headers.get('content-disposition'), /ghostchat-chats\.csv/);
+  assert.match(csvExport.headers.get('content-type'), /^text\/csv; charset=utf-8/);
+  const csvBytes = new Uint8Array(await csvExport.arrayBuffer());
+  assert.deepEqual(Array.from(csvBytes.slice(0, 3)), [0xef, 0xbb, 0xbf]);
+  assert.match(new TextDecoder().decode(csvBytes), /Xin chào tiếng Việt/);
+
+  const deleted = await fetch(`${url}/api/admin/chats/${encodeURIComponent(chats[0].id)}`, {
+    method: 'DELETE',
+    headers,
+  });
+  assert.equal(deleted.status, 200);
+  assert.equal(
+    (await fetch(`${url}/api/admin/chats/${encodeURIComponent(chats[0].id)}`, { headers })).status,
+    404,
+  );
+});
+
+test('hides the admin page behind a configured secret path', async (t) => {
+  const adminPath = '/moderation-secret-123';
+  const url = await createTestServer(t, { adminToken: 'test-admin-token-123', adminPath });
+
+  assert.equal((await fetch(`${url}/admin`)).status, 404);
+  assert.equal((await fetch(`${url}${adminPath}`)).status, 200);
 });
 
 test('masks profanity before broadcasting a message', async (t) => {
@@ -370,7 +576,8 @@ test('relays valid reactions and ignores invalid ones', async (t) => {
 });
 
 test('auto-bans a client after repeated reports and blocks re-login', async (t) => {
-  const url = await createTestServer(t);
+  const adminToken = 'test-admin-token-123';
+  const url = await createTestServer(t, { adminToken });
   const alice = await connectClient(t, url);
   const bob = await connectClient(t, url);
   const bobId = 'client-bob-123456';
@@ -393,6 +600,22 @@ test('auto-bans a client after repeated reports and blocks re-login', async (t) 
   const rejected = waitForEvent(bobReturning, 'app_error');
   login(bobReturning, { username: 'Bob', interests: 'music', clientId: bobId });
   assert.equal((await rejected).code, 'banned');
+
+  const audit = await fetch(`${url}/api/admin/audit-log`, {
+    headers: { Authorization: `Bearer ${adminToken}` },
+  });
+  assert.equal(audit.status, 200);
+  const { events } = await audit.json();
+  assert.equal(events.length, 1);
+  assert.deepEqual(
+    {
+      type: events[0].type,
+      actor: events[0].actor,
+      clientId: events[0].clientId,
+      moderationAction: events[0].moderationAction,
+    },
+    { type: 'automatic_ban', actor: 'system', clientId: bobId, moderationAction: 'automatic' },
+  );
 });
 
 test('exposes runtime metrics on the health endpoint', async (t) => {
