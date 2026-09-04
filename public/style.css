@@ -1579,6 +1579,63 @@ body {
   box-shadow: 0 14px 28px rgba(231, 124, 76, 0.28);
 }
 
+/* Keep the refreshed landing screen readable when the light theme is active. */
+[data-theme='light'] {
+  color-scheme: light;
+}
+
+[data-theme='light'] body {
+  background: radial-gradient(circle at 8% 12%, rgba(231, 124, 76, 0.16), transparent 28%),
+    radial-gradient(circle at 88% 84%, rgba(83, 183, 166, 0.14), transparent 32%), var(--bg-dark);
+}
+
+[data-theme='light'] .app-container::before {
+  opacity: 0.1;
+  background-image: linear-gradient(rgba(25, 48, 50, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(25, 48, 50, 0.08) 1px, transparent 1px);
+}
+
+[data-theme='light'] .chat-interface {
+  border-color: rgba(25, 48, 50, 0.18);
+  background: linear-gradient(135deg, rgba(255, 252, 246, 0.95), rgba(235, 244, 239, 0.9));
+  box-shadow:
+    0 30px 90px rgba(25, 48, 50, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+[data-theme='light'] .login-card {
+  border-color: rgba(25, 48, 50, 0.15);
+  background: rgba(255, 252, 246, 0.72);
+  box-shadow:
+    0 20px 50px rgba(25, 48, 50, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+[data-theme='light'] #login-form input,
+[data-theme='light'] #login-form select,
+[data-theme='light'] .custom-select-trigger {
+  border-color: rgba(25, 48, 50, 0.16);
+  background: rgba(25, 48, 50, 0.055);
+}
+
+[data-theme='light'] .custom-select-trigger:hover {
+  background: rgba(25, 48, 50, 0.09);
+}
+
+[data-theme='light'] .custom-select-option[aria-selected='true'] {
+  color: #8f4228;
+  background: rgba(216, 104, 61, 0.16);
+}
+
+[data-theme='light'] .safety-notice {
+  border-color: rgba(174, 91, 49, 0.3);
+  background: rgba(216, 104, 61, 0.09);
+}
+
+[data-theme='light'] .safety-notice h2 {
+  color: #8f4228;
+}
+
 @media (max-width: 780px) {
   body {
     height: auto;

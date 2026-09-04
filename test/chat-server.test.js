@@ -269,7 +269,11 @@ test('persists reports and requires an admin token to review them', async (t) =>
   const url = await createTestServer(t, { adminToken });
   const adminPage = await fetch(`${url}/admin`);
   assert.equal(adminPage.status, 200);
-  assert.match(await adminPage.text(), /Moderation inbox/);
+  const adminMarkup = await adminPage.text();
+  assert.match(adminMarkup, /Moderation inbox/);
+  assert.match(adminMarkup, /role="tablist"/);
+  assert.match(adminMarkup, /data-tab="reports"/);
+  assert.match(adminMarkup, /data-tab-panel="chats"/);
 
   const alice = await connectClient(t, url);
   const bob = await connectClient(t, url);

@@ -22,6 +22,8 @@ const chatPagination = document.getElementById('chat-pagination');
 const previousChatPage = document.getElementById('previous-chat-page');
 const nextChatPage = document.getElementById('next-chat-page');
 const chatPageStatus = document.getElementById('chat-page-status');
+const tabButtons = Array.from(document.querySelectorAll('.admin-tab'));
+const tabPanels = Array.from(document.querySelectorAll('[data-tab-panel]'));
 const adminStatus = document.getElementById('admin-status');
 const openReportsStat = document.getElementById('stat-open-reports');
 const linkedReportsStat = document.getElementById('stat-linked-reports');
@@ -29,7 +31,10 @@ const resolvedReportsStat = document.getElementById('stat-resolved-reports');
 const storedChatsStat = document.getElementById('stat-stored-chats');
 const activeBansStat = document.getElementById('stat-active-bans');
 const TOKEN_KEY = 'ghostchat-admin-token';
+const TAB_KEY = 'ghostchat-admin-tab';
 const CHAT_PAGE_SIZE = 10;
+const TAB_ORDER = ['overview', 'reports', 'resolved', 'bans', 'audit', 'chats'];
+let activeTab = 'overview';
 let chatPage = 1;
 
 function updateReportStats(activeReports, archivedReports = []) {
@@ -43,6 +48,46 @@ function updateReportStats(activeReports, archivedReports = []) {
 
 function getToken() {
   return window.sessionStorage.getItem(TOKEN_KEY) || '';
+}
+
+function getSavedTab() {
+  try {
+    const savedTab = window.sessionStorage.getItem(TAB_KEY);
+    return TAB_ORDER.includes(savedTab) ? savedTab : 'overview';
+  } catch {
+    return 'overview';
+  }
+}
+
+function loadActiveTab() {
+  if (!getToken()) return;
+  if (activeTab === 'overview') return loadOverview();
+  if (activeTab === 'reports' || activeTab === 'resolved') return loadReports();
+  if (activeTab === 'bans') return loadBans();
+  if (activeTab === 'audit') return loadAuditLog();
+  return loadChats();
+}
+
+function setActiveTab(tabName, { load = true } = {}) {
+  if (!TAB_ORDER.includes(tabName)) tabName = 'overview';
+  activeTab = tabName;
+  tabButtons.forEach((button) => {
+    const selected = button.dataset.tab === tabName;
+    button.setAttribute('aria-selected', String(selected));
+    button.tabIndex = selected ? 0 : -1;
+  });
+  tabPanels.forEach((panel) => {
+    panel.hidden = panel.dataset.tabPanel !== tabName;
+  });
+  try {
+    window.sessionStorage.setItem(TAB_KEY, tabName);
+  } catch {
+    // Tab selection still works for this page when storage is unavailable.
+  }
+  if (load) {
+    window.scrollTo(0, 0);
+    loadActiveTab();
+  }
 }
 
 function setStatus(message, isError = false) {
@@ -445,6 +490,24 @@ async function loadReports() {
   }
 }
 
+async function loadOverview() {
+  try {
+    setStatus('Loading overview...');
+    const [reportsResult, archiveResult, bansResult, chatsResult] = await Promise.all([
+      api('/api/admin/reports'),
+      api('/api/admin/reports/archive'),
+      api('/api/admin/bans'),
+      api('/api/admin/chats?page=1&pageSize=1'),
+    ]);
+    updateReportStats(reportsResult.reports, archiveResult.reports);
+    activeBansStat.innerText = String(bansResult.bans.length);
+    storedChatsStat.innerText = String(chatsResult.total);
+    setStatus('Overview refreshed.');
+  } catch (error) {
+    setStatus(error.message, true);
+  }
+}
+
 async function loadBans() {
   try {
     refreshBansButton.disabled = true;
@@ -458,6 +521,26 @@ async function loadBans() {
     refreshBansButton.disabled = false;
   }
 }
+
+tabButtons.forEach((button, index) => {
+  button.addEventListener('click', () => setActiveTab(button.dataset.tab));
+  button.addEventListener('keydown', (event) => {
+    if (!['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+      return;
+    }
+    event.preventDefault();
+    let nextIndex;
+    if (event.key === 'Home') nextIndex = 0;
+    else if (event.key === 'End') nextIndex = tabButtons.length - 1;
+    else {
+      const direction = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : -1;
+      nextIndex = (index + direction + tabButtons.length) % tabButtons.length;
+    }
+    const nextButton = tabButtons[nextIndex];
+    nextButton.focus();
+    setActiveTab(nextButton.dataset.tab);
+  });
+});
 
 async function loadAuditLog() {
   try {
@@ -534,10 +617,7 @@ async function exportChats(format) {
 tokenForm.addEventListener('submit', (event) => {
   event.preventDefault();
   window.sessionStorage.setItem(TOKEN_KEY, tokenInput.value);
-  loadReports();
-  loadBans();
-  loadAuditLog();
-  loadChats();
+  loadActiveTab();
 });
 
 clearTokenButton.addEventListener('click', () => {
@@ -581,10 +661,9 @@ exportJsonButton.addEventListener('click', () => exportChats('json'));
 exportCsvButton.addEventListener('click', () => exportChats('csv'));
 statusFilter.addEventListener('change', loadReports);
 
+activeTab = getSavedTab();
+setActiveTab(activeTab, { load: false });
 tokenInput.value = getToken();
 if (getToken()) {
-  loadReports();
-  loadBans();
-  loadAuditLog();
-  loadChats();
+  loadActiveTab();
 }

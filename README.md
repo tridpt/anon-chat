@@ -19,6 +19,7 @@ Anonymous, one-on-one chat with language-compatible matching. GhostChat does not
 - Report a current partner with a reason, then review and resolve reports in `/admin`.
 - Keep resolved reports in a separate archive and apply moderator actions such as a 24-hour chat block or permanent ban.
 - Store masked chat transcripts for admin review, with search, date filters, pagination, JSON/CSV export, deletion, and configurable automatic retention.
+- Organize the moderation dashboard into separate Overview, Reports, Resolved, Bans, Activity, and Chats tabs.
 - Mask basic profanity, limit links per message, and auto-suspend clients that pass a report threshold.
 - Show a live count of people currently online alongside the queue status.
 - Server-side validation, message-size limits, queue limits, and per-socket flood controls.
