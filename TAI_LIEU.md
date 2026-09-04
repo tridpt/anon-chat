@@ -58,7 +58,7 @@ anon-chat/
 ├── .gitignore
 ├── README.md                 # Hướng dẫn ngắn (tiếng Anh)
 ├── TAI_LIEU.md               # Tài liệu chi tiết này
-├── data/                     # Dữ liệu bền vững (gitignored): reports, bans, chats, audit logs
+├── data/                     # Dữ liệu bền vững (gitignored): reports, bans, chats, moderator accounts, audit logs
 ├── public/                   # Tài nguyên frontend tĩnh
 │   ├── index.html            # Giao diện chat chính
 │   ├── script.js             # Logic client
@@ -204,22 +204,26 @@ Tham số: `{ logger, dataDir, adminToken, adminPath, adminSessionTtlMs, redisUr
 
 **Các route HTTP:**
 
-| Method   | Đường dẫn                | Mô tả                                                                                                             |
-| -------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------- |
-| GET      | `/health`                | Công khai. Trả `status`, `uptimeSeconds`, `online`, `waiting`, `totalMatches`, `averageMatchWaitMs`, `activeBans` |
-| GET      | `/admin`                 | Trả 404 nếu `ADMIN_PATH` đã đổi; đường dẫn cấu hình trả trang `admin.html`                                        |
-| POST     | `/api/admin/login`       | Đổi `ADMIN_TOKEN` lấy phiên ngắn hạn qua cookie HttpOnly                                                          |
-| GET      | `/api/admin/session`     | Kiểm tra phiên admin hiện tại                                                                                     |
-| POST     | `/api/admin/logout`      | Thu hồi phiên admin hiện tại                                                                                      |
-| GET      | `/api/admin/reports`     | Yêu cầu admin. Liệt kê báo cáo, lọc theo `?status=`                                                               |
-| PATCH    | `/api/admin/reports/:id` | Yêu cầu admin. Cập nhật `status` + `moderationNote`                                                               |
-| (static) | `/*`                     | Phục vụ thư mục `public/`                                                                                         |
+| Method   | Đường dẫn                   | Mô tả                                                                                                             |
+| -------- | --------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| GET      | `/health`                   | Công khai. Trả `status`, `uptimeSeconds`, `online`, `waiting`, `totalMatches`, `averageMatchWaitMs`, `activeBans` |
+| GET      | `/admin`                    | Trả 404 nếu `ADMIN_PATH` đã đổi; đường dẫn cấu hình trả trang `admin.html`                                        |
+| POST     | `/api/admin/login`          | Đăng nhập bằng moderator account hoặc đổi `ADMIN_TOKEN` bootstrap lấy phiên ngắn hạn qua cookie HttpOnly          |
+| GET      | `/api/admin/session`        | Kiểm tra phiên admin hiện tại                                                                                     |
+| POST     | `/api/admin/logout`         | Thu hồi phiên admin hiện tại                                                                                      |
+| GET      | `/api/admin/moderators`     | Admin xem danh sách tài khoản moderator                                                                           |
+| POST     | `/api/admin/moderators`     | Admin tạo tài khoản moderator (`admin`, `moderator`, hoặc `viewer`)                                               |
+| PATCH    | `/api/admin/moderators/:id` | Admin đổi role, mật khẩu, hoặc bật/tắt tài khoản                                                                  |
+| GET      | `/api/admin/reports`        | Yêu cầu admin. Liệt kê báo cáo, lọc theo `?status=`                                                               |
+| PATCH    | `/api/admin/reports/:id`    | Yêu cầu admin. Cập nhật `status` + `moderationNote`                                                               |
+| (static) | `/*`                        | Phục vụ thư mục `public/`                                                                                         |
 
 **Xác thực admin:**
 
-- `POST /api/admin/login` so sánh token bằng `crypto.timingSafeEqual`, sau đó tạo ID phiên ngẫu nhiên trong RAM và gửi cookie `HttpOnly; SameSite=Strict; Path=/api/admin`.
-- `hasAdminAccess(request)` ưu tiên phiên cookie còn hạn; header `Authorization: Bearer <token>` vẫn được hỗ trợ cho script server-to-server.
-- `requireAdmin` chặn truy cập trái phép (401), đặt `Cache-Control: no-store`, và yêu cầu cùng origin cho các request thay đổi dữ liệu.
+- `POST /api/admin/login` nhận username/password của tài khoản moderator hoặc `ADMIN_TOKEN` bootstrap, sau đó tạo ID phiên ngẫu nhiên trong RAM và gửi cookie `HttpOnly; SameSite=Strict; Path=/api/admin`.
+- Tài khoản được lưu trong `data/moderators.json`; mật khẩu dùng `crypto.scrypt` với salt riêng, không lưu plaintext. Có ba role: `admin`, `moderator`, `viewer`.
+- `requireAdmin` xác thực principal và chặn truy cập trái phép (401); middleware role giới hạn thao tác thay đổi (moderator) và quản lý đội ngũ (admin). Header `Authorization: Bearer <token>` vẫn được hỗ trợ cho script server-to-server.
+- Mỗi request có session named account đều tra lại account; disable hoặc đổi role có hiệu lực ngay. Không thể vô hiệu hóa admin cuối cùng đang hoạt động.
 - Phiên mặc định sống 8 giờ (`ADMIN_SESSION_TTL_HOURS`), bị thu hồi khi logout hoặc restart server; đăng nhập bị giới hạn theo IP.
 - `express.json({ limit: '5kb' })` giới hạn body API.
 
@@ -348,7 +352,9 @@ Cờ trạng thái quan trọng: `hasActiveSession`, `isInChat`, `currentPartner
 
 ### 8.5. Trang kiểm duyệt — `admin.html` / `admin.js`
 
-- Nhập `ADMIN_TOKEN` một lần; trình duyệt không lưu token mà dùng cookie phiên `HttpOnly`.
+- Đăng nhập bằng tài khoản moderator; `ADMIN_TOKEN` chỉ dùng bootstrap/recovery và trình duyệt không lưu credential mà dùng cookie phiên `HttpOnly`.
+- Tab **Team** chỉ hiện với admin để tạo account, đổi role/mật khẩu, và bật/tắt moderator.
+- `viewer` chỉ đọc; `moderator` có thể xử lý report, gỡ ban, và xóa transcript; `admin` có toàn quyền.
 - Có nút đăng xuất, tự khôi phục phiên khi tải lại, và tự yêu cầu đăng nhập lại khi phiên hết hạn.
 - Liệt kê báo cáo, lọc theo trạng thái, mỗi báo cáo là một thẻ cho phép đổi `status` và ghi `moderationNote`, lưu qua `PATCH /api/admin/reports/:id`.
 - Trang đặt `noindex, nofollow`.
@@ -357,14 +363,14 @@ Cờ trạng thái quan trọng: `hasActiveSession`, `isInChat`, `currentPartner
 
 ## 9. Cấu hình (biến môi trường)
 
-| Biến                      | Mặc định                  | Mục đích                                                              |
-| ------------------------- | ------------------------- | --------------------------------------------------------------------- |
-| `PORT`                    | `3000`                    | Cổng HTTP và Socket.IO                                                |
-| `DATA_DIR`                | `./data`                  | Thư mục lưu báo cáo và lệnh cấm                                       |
-| `ADMIN_TOKEN`             | _(bắt buộc để bật admin)_ | Token dùng lúc đăng nhập và bảo vệ API kiểm duyệt                     |
-| `ADMIN_SESSION_TTL_HOURS` | `8`                       | Thời gian sống phiên admin trong RAM (giờ)                            |
-| `ADMIN_COOKIE_SECURE`     | `auto`                    | Ép cờ `Secure` cho cookie (`true`/`1`); tự bật trong HTTPS/production |
-| `REDIS_URL`               | _(tùy chọn)_              | Bật Redis adapter cho nhiều instance, vd `redis://localhost:6379`     |
+| Biến                      | Mặc định                  | Mục đích                                                                     |
+| ------------------------- | ------------------------- | ---------------------------------------------------------------------------- |
+| `PORT`                    | `3000`                    | Cổng HTTP và Socket.IO                                                       |
+| `DATA_DIR`                | `./data`                  | Thư mục lưu báo cáo, lệnh cấm, transcript, tài khoản moderator, và audit log |
+| `ADMIN_TOKEN`             | _(khuyến nghị bootstrap)_ | Token tạo admin đầu tiên và truy cập khẩn cấp server-to-server               |
+| `ADMIN_SESSION_TTL_HOURS` | `8`                       | Thời gian sống phiên admin trong RAM (giờ)                                   |
+| `ADMIN_COOKIE_SECURE`     | `auto`                    | Ép cờ `Secure` cho cookie (`true`/`1`); tự bật trong HTTPS/production        |
+| `REDIS_URL`               | _(tùy chọn)_              | Bật Redis adapter cho nhiều instance, vd `redis://localhost:6379`            |
 
 Bật kiểm duyệt (PowerShell):
 
@@ -373,7 +379,7 @@ $env:ADMIN_TOKEN = 'mot-chuoi-bi-mat-dai-va-ngau-nhien'
 npm start
 ```
 
-Mở `http://localhost:3000/admin` và nhập đúng token. Token được đổi thành cookie phiên; không dán token vào URL.
+Mở `http://localhost:3000/admin`, nhập token bootstrap một lần để tạo tài khoản `admin` đầu tiên trong tab **Team**, sau đó dùng username/password cho các lần đăng nhập tiếp theo. Token được đổi thành cookie phiên; không dán token vào URL.
 
 ---
 
@@ -453,7 +459,8 @@ Khuyến nghị production: HTTPS, rate limit ở tầng proxy/IP, công bố ch
 - `data/reports.json` — mảng báo cáo (mới nhất ở đầu).
 - `data/bans.json` — mảng lệnh cấm còn hiệu lực `{ clientId, banUntil }`.
 - `data/chats.json` — transcript chat đã che nội dung, tự dọn theo `CHAT_RETENTION_DAYS`.
-- `data/resolved-reports.json` và `data/moderation-log.json` — báo cáo đã xử lý và nhật ký thao tác moderator.
+- `data/resolved-reports.json` và `data/moderation-log.json` — báo cáo đã xử lý và nhật ký thao tác moderator (kèm actor).
+- `data/moderators.json` — tài khoản moderator, role, trạng thái, và hash mật khẩu salted `scrypt`; không commit hoặc chia sẻ file này.
 - Các file ghi nguyên tử (`.tmp` + `rename`) và tuần tự hóa qua hàng đợi thao tác. Thư mục `data/` nằm trong `.gitignore`.
 
 ---

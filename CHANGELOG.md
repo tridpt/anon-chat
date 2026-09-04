@@ -20,6 +20,8 @@ and the project follows [Semantic Versioning](https://semver.org/).
 - A `docker-compose.yml` stack (two app instances + Redis) for verifying the shared queue.
 - Short-lived browser admin sessions using `HttpOnly`, `SameSite=Strict` cookies, with sign-out,
   expiration, login throttling, and same-origin checks for moderation changes.
+- Named moderator accounts with salted `scrypt` passwords, `admin`/`moderator`/`viewer` roles,
+  immediate account revocation, team management, and actor-aware moderation audit events.
 
 ### Changed
 

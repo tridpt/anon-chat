@@ -1,9 +1,14 @@
 const tokenForm = document.getElementById('token-form');
 const tokenInput = document.getElementById('admin-token');
+const usernameInput = document.getElementById('admin-username');
+const passwordInput = document.getElementById('admin-password');
+const credentialGrid = document.querySelector('.credential-grid');
+const bootstrapRow = document.querySelector('.bootstrap-row');
 const logoutButton = document.getElementById('admin-logout');
 const signInButton = document.getElementById('sign-in');
 const tokenTitle = document.getElementById('token-title');
 const tokenDescription = document.getElementById('token-description');
+const principalSummary = document.getElementById('principal-summary');
 const adminWorkspace = document.getElementById('admin-workspace');
 const statusFilter = document.getElementById('status-filter');
 const refreshButton = document.getElementById('refresh-reports');
@@ -34,13 +39,29 @@ const linkedReportsStat = document.getElementById('stat-linked-reports');
 const resolvedReportsStat = document.getElementById('stat-resolved-reports');
 const storedChatsStat = document.getElementById('stat-stored-chats');
 const activeBansStat = document.getElementById('stat-active-bans');
+const refreshModeratorsButton = document.getElementById('refresh-moderators');
+const moderatorForm = document.getElementById('moderator-form');
+const moderatorUsernameInput = document.getElementById('moderator-username');
+const moderatorRoleInput = document.getElementById('moderator-role');
+const moderatorPasswordInput = document.getElementById('moderator-password');
+const createModeratorButton = document.getElementById('create-moderator');
+const moderatorsContainer = document.getElementById('moderators');
 const TAB_KEY = 'ghostchat-admin-tab';
 const LEGACY_TOKEN_KEY = 'ghostchat-admin-token';
 const CHAT_PAGE_SIZE = 10;
-const TAB_ORDER = ['overview', 'reports', 'resolved', 'bans', 'audit', 'chats'];
+const TAB_ORDER = ['overview', 'reports', 'resolved', 'bans', 'audit', 'team', 'chats'];
 let activeTab = 'overview';
 let chatPage = 1;
 let isAuthenticated = false;
+let principal = null;
+
+function canModerate() {
+  return principal?.role === 'admin' || principal?.role === 'moderator';
+}
+
+function canManageTeam() {
+  return principal?.role === 'admin';
+}
 
 function updateReportStats(activeReports, archivedReports = []) {
   const allReports = [...activeReports, ...archivedReports];
@@ -66,6 +87,7 @@ function loadActiveTab() {
   if (activeTab === 'reports' || activeTab === 'resolved') return loadReports();
   if (activeTab === 'bans') return loadBans();
   if (activeTab === 'audit') return loadAuditLog();
+  if (activeTab === 'team') return loadModerators();
   return loadChats();
 }
 
@@ -74,6 +96,7 @@ function clearWorkspace() {
   resolvedReportsContainer.innerHTML = '';
   bansContainer.innerHTML = '';
   auditLogContainer.innerHTML = '';
+  moderatorsContainer.innerHTML = '';
   chatsContainer.innerHTML = '';
   chatPagination.hidden = true;
   openReportsStat.innerText = '—';
@@ -83,30 +106,54 @@ function clearWorkspace() {
   activeBansStat.innerText = '—';
 }
 
-function setAuthenticated(authenticated, expiresAt = null) {
+function updateRoleUi() {
+  const teamTab = document.getElementById('tab-team');
+  const teamPanel = document.getElementById('panel-team');
+  const showTeam = isAuthenticated && canManageTeam();
+  teamTab.hidden = !showTeam;
+  teamPanel.hidden = !showTeam || activeTab !== 'team';
+  if (!showTeam && activeTab === 'team') setActiveTab('overview', { load: false });
+  moderatorForm.hidden = !showTeam;
+  if (refreshModeratorsButton) refreshModeratorsButton.hidden = !showTeam;
+}
+
+function setAuthenticated(authenticated, expiresAt = null, nextPrincipal = null) {
   isAuthenticated = authenticated;
+  principal = authenticated ? nextPrincipal : null;
   adminWorkspace.hidden = !authenticated;
   tokenForm.classList.toggle('authenticated', authenticated);
+  credentialGrid.hidden = authenticated;
+  bootstrapRow.hidden = authenticated;
+  usernameInput.hidden = authenticated;
+  passwordInput.hidden = authenticated;
   tokenInput.hidden = authenticated;
-  tokenInput.required = !authenticated;
   signInButton.hidden = authenticated;
   logoutButton.hidden = !authenticated;
+  principalSummary.hidden = !authenticated;
+  updateRoleUi();
 
   if (authenticated) {
-    tokenTitle.innerText = 'Admin session active';
+    tokenTitle.innerText = `${principal?.username || 'Moderator'} session active`;
     tokenDescription.innerText = expiresAt
-      ? `This session expires ${formatDate(expiresAt)}. The credential is held in an HttpOnly cookie.`
-      : 'This session is protected by an HttpOnly cookie.';
+      ? `Expires ${formatDate(expiresAt)}. Access is protected by an HttpOnly cookie.`
+      : 'Access is protected by an HttpOnly cookie.';
+    principalSummary.innerText = `${principal?.username || 'Moderator'} · ${principal?.role || 'viewer'}`;
   } else {
     tokenTitle.innerText = 'Sign in to moderation tools';
     tokenDescription.innerText =
-      'Your token is exchanged for a short-lived, HttpOnly session and is never stored here.';
+      'Use your named moderator account. The bootstrap token remains available for first setup or recovery.';
+    principalSummary.innerText = '';
+    usernameInput.value = '';
+    passwordInput.value = '';
+    tokenInput.value = '';
     clearWorkspace();
   }
 }
 
 function setActiveTab(tabName, { load = true } = {}) {
   if (!TAB_ORDER.includes(tabName)) tabName = 'overview';
+  const targetButton = tabButtons.find((button) => button.dataset.tab === tabName);
+  if (targetButton?.hidden) tabName = 'overview';
   activeTab = tabName;
   tabButtons.forEach((button) => {
     const selected = button.dataset.tab === tabName;
@@ -205,6 +252,7 @@ function createBanCard(ban) {
   liftButton.type = 'button';
   liftButton.className = 'danger-button';
   liftButton.innerText = 'Lift ban';
+  liftButton.hidden = !canModerate();
   liftButton.addEventListener('click', async () => {
     if (!window.confirm(`Lift the restriction for ${ban.alias || 'this anonymous user'}?`)) return;
     liftButton.disabled = true;
@@ -234,6 +282,9 @@ function renderBans(bans) {
 }
 
 function formatAuditAction(event) {
+  if (event.type === 'moderator_created') return 'Moderator account created';
+  if (event.type === 'moderator_updated') return 'Moderator account updated';
+  if (event.type === 'transcript_deleted') return 'Transcript deleted';
   if (event.type === 'ban_lifted') return 'Ban lifted';
   if (event.type === 'automatic_ban') return 'Automatic 24-hour suspension';
   if (event.moderationAction === 'permanent_ban') return 'Permanent ban applied';
@@ -248,16 +299,24 @@ function createAuditCard(event) {
   const topline = document.createElement('div');
   topline.className = 'audit-topline';
   const heading = document.createElement('h3');
-  heading.innerText = `${formatAuditAction(event)} · ${event.alias || 'Anonymous user'}`;
+  const subject =
+    event.alias || event.targetUsername || (event.chatId ? 'Stored chat' : 'Anonymous user');
+  heading.innerText = `${formatAuditAction(event)} · ${subject}`;
   const actor = document.createElement('span');
   actor.className = 'badge';
-  actor.innerText = event.actor || 'Admin';
+  actor.innerText = event.actorUsername
+    ? `${event.actorUsername} · ${event.actorRole || 'admin'}`
+    : event.actor || 'System';
   topline.append(heading, actor);
 
   const metadata = document.createElement('p');
   metadata.className = 'audit-meta';
   const reportReference = event.reportId ? ` · Report ${event.reportId}` : '';
-  metadata.innerText = `${formatDate(event.occurredAt)} · ${event.clientId}${reportReference}`;
+  const targetReference = event.targetModeratorId
+    ? ` · Account ${event.targetUsername || event.targetModeratorId}`
+    : '';
+  const clientReference = event.clientId ? ` · ${event.clientId}` : '';
+  metadata.innerText = `${formatDate(event.occurredAt)}${clientReference}${reportReference}${targetReference}`;
 
   const detail = document.createElement('p');
   detail.className = 'audit-detail';
@@ -277,6 +336,117 @@ function renderAuditLog(events) {
     return;
   }
   events.forEach((event) => auditLogContainer.appendChild(createAuditCard(event)));
+}
+
+function createModeratorCard(moderator) {
+  const card = document.createElement('article');
+  card.className = `moderator-card${moderator.active ? '' : ' disabled'}`;
+
+  const details = document.createElement('div');
+  const heading = document.createElement('h3');
+  heading.innerText = moderator.username;
+  const metadata = document.createElement('p');
+  metadata.className = 'moderator-meta';
+  const lastLogin = moderator.lastLoginAt ? formatDate(moderator.lastLoginAt) : 'Never';
+  metadata.innerText = `${moderator.active ? 'Active' : 'Disabled'} · Created ${formatDate(moderator.createdAt)} · Last sign-in ${lastLogin}`;
+  details.append(heading, metadata);
+
+  const controls = document.createElement('div');
+  controls.className = 'moderator-controls';
+  const role = document.createElement('select');
+  role.setAttribute('aria-label', `Role for ${moderator.username}`);
+  for (const value of ['admin', 'moderator', 'viewer']) {
+    const option = document.createElement('option');
+    option.value = value;
+    option.innerText = value[0].toUpperCase() + value.slice(1);
+    option.selected = value === moderator.role;
+    role.appendChild(option);
+  }
+  const password = document.createElement('input');
+  password.type = 'password';
+  password.autocomplete = 'new-password';
+  password.placeholder = 'New password (optional)';
+  password.setAttribute('aria-label', `New password for ${moderator.username}`);
+
+  const save = document.createElement('button');
+  save.type = 'button';
+  save.innerText = 'Save';
+  save.addEventListener('click', async () => {
+    const body = { role: role.value };
+    if (password.value) body.password = password.value;
+    save.disabled = true;
+    try {
+      await api(`/api/admin/moderators/${encodeURIComponent(moderator.id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      });
+      password.value = '';
+      setStatus(`Updated ${moderator.username}.`);
+      await loadModerators();
+      await restoreAdminSession();
+    } catch (error) {
+      setStatus(error.message, true);
+      save.disabled = false;
+    }
+  });
+
+  const toggle = document.createElement('button');
+  toggle.type = 'button';
+  toggle.className = moderator.active ? 'danger-button' : 'secondary';
+  toggle.innerText = moderator.active ? 'Disable' : 'Enable';
+  toggle.addEventListener('click', async () => {
+    const action = moderator.active ? 'disable' : 'enable';
+    if (!window.confirm(`${action[0].toUpperCase() + action.slice(1)} ${moderator.username}?`))
+      return;
+    toggle.disabled = true;
+    try {
+      await api(`/api/admin/moderators/${encodeURIComponent(moderator.id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ active: !moderator.active }),
+      });
+      setStatus(`${moderator.username} is now ${moderator.active ? 'disabled' : 'active'}.`);
+      await loadModerators();
+      await restoreAdminSession();
+    } catch (error) {
+      setStatus(error.message, true);
+      toggle.disabled = false;
+    }
+  });
+  controls.append(role, password, save, toggle);
+  card.append(details, controls);
+  return card;
+}
+
+function renderModerators(moderators) {
+  moderatorsContainer.innerHTML = '';
+  if (!moderators.length) {
+    moderatorRoleInput.value = 'admin';
+    createModeratorButton.innerText = 'Create first admin';
+    const empty = document.createElement('p');
+    empty.className = 'empty-state';
+    empty.innerText =
+      'No named moderator accounts yet. Create the first active admin before adding other roles.';
+    moderatorsContainer.appendChild(empty);
+    return;
+  }
+  createModeratorButton.innerText = 'Create account';
+  moderators.forEach((moderator) =>
+    moderatorsContainer.appendChild(createModeratorCard(moderator)),
+  );
+}
+
+async function loadModerators() {
+  if (!canManageTeam()) return;
+  try {
+    refreshModeratorsButton.disabled = true;
+    const { moderators } = await api('/api/admin/moderators');
+    renderModerators(moderators);
+  } catch (error) {
+    moderatorsContainer.innerHTML = '';
+    setStatus(error.message, true);
+  } finally {
+    refreshModeratorsButton.disabled = false;
+  }
 }
 
 function createReportCard(report, { archived = false } = {}) {
@@ -374,6 +544,12 @@ function createReportCard(report, { archived = false } = {}) {
   const save = document.createElement('button');
   save.type = 'button';
   save.innerText = 'Save review';
+  if (!canModerate()) {
+    status.disabled = true;
+    action.disabled = true;
+    note.readOnly = true;
+    save.hidden = true;
+  }
   save.addEventListener('click', async () => {
     if (action.value !== 'none' && status.value !== 'resolved') {
       setStatus('Choose Resolved before applying a moderation action.', true);
@@ -459,6 +635,7 @@ function createChatCard(chat) {
   deleteButton.type = 'button';
   deleteButton.className = 'danger-button';
   deleteButton.innerText = 'Delete transcript';
+  deleteButton.hidden = !canModerate();
   deleteButton.addEventListener('click', async () => {
     if (!window.confirm('Delete this transcript permanently?')) return;
     deleteButton.disabled = true;
@@ -565,21 +742,23 @@ async function loadBans() {
   }
 }
 
-tabButtons.forEach((button, index) => {
+tabButtons.forEach((button) => {
   button.addEventListener('click', () => setActiveTab(button.dataset.tab));
   button.addEventListener('keydown', (event) => {
     if (!['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
       return;
     }
     event.preventDefault();
+    const visibleTabs = tabButtons.filter((tab) => !tab.hidden);
+    const currentIndex = visibleTabs.indexOf(button);
     let nextIndex;
     if (event.key === 'Home') nextIndex = 0;
-    else if (event.key === 'End') nextIndex = tabButtons.length - 1;
+    else if (event.key === 'End') nextIndex = visibleTabs.length - 1;
     else {
       const direction = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : -1;
-      nextIndex = (index + direction + tabButtons.length) % tabButtons.length;
+      nextIndex = (currentIndex + direction + visibleTabs.length) % visibleTabs.length;
     }
-    const nextButton = tabButtons[nextIndex];
+    const nextButton = visibleTabs[nextIndex];
     nextButton.focus();
     setActiveTab(nextButton.dataset.tab);
   });
@@ -667,9 +846,11 @@ async function exportChats(format) {
 
 tokenForm.addEventListener('submit', async (event) => {
   event.preventDefault();
+  const username = usernameInput.value.trim();
+  const password = passwordInput.value;
   const token = tokenInput.value.trim();
-  if (!token) {
-    setStatus('Enter the admin token first.', true);
+  if ((!username || !password) && !token) {
+    setStatus('Enter a moderator username and password, or use the bootstrap token.', true);
     return;
   }
 
@@ -679,7 +860,7 @@ tokenForm.addEventListener('submit', async (event) => {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token }),
+      body: JSON.stringify(token ? { token } : { username, password }),
     });
     let data = {};
     try {
@@ -690,7 +871,9 @@ tokenForm.addEventListener('submit', async (event) => {
     if (!response.ok) throw new Error(data.error || 'Sign-in failed.');
 
     tokenInput.value = '';
-    setAuthenticated(true, data.expiresAt);
+    usernameInput.value = '';
+    passwordInput.value = '';
+    setAuthenticated(true, data.expiresAt, data.moderator);
     setStatus('Signed in. Moderation data is ready.');
     loadActiveTab();
   } catch (error) {
@@ -733,7 +916,7 @@ async function restoreAdminSession() {
       // Keep a useful fallback for non-JSON errors.
     }
     if (response.ok && data.authenticated) {
-      setAuthenticated(true, data.expiresAt);
+      setAuthenticated(true, data.expiresAt, data.moderator);
       setStatus('Session restored. Moderation data is ready.');
       loadActiveTab();
       return;
@@ -749,10 +932,38 @@ async function restoreAdminSession() {
   }
 }
 
+moderatorForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!canManageTeam()) {
+    setStatus('Only an admin can create moderator accounts.', true);
+    return;
+  }
+  createModeratorButton.disabled = true;
+  try {
+    const result = await api('/api/admin/moderators', {
+      method: 'POST',
+      body: JSON.stringify({
+        username: moderatorUsernameInput.value.trim(),
+        role: moderatorRoleInput.value,
+        password: moderatorPasswordInput.value,
+      }),
+    });
+    moderatorForm.reset();
+    moderatorRoleInput.value = 'moderator';
+    setStatus(`Created moderator account for ${result.moderator.username}.`);
+    await loadModerators();
+  } catch (error) {
+    setStatus(error.message, true);
+  } finally {
+    createModeratorButton.disabled = false;
+  }
+});
+
 refreshButton.addEventListener('click', loadReports);
 refreshResolvedButton.addEventListener('click', loadReports);
 refreshBansButton.addEventListener('click', loadBans);
 refreshAuditButton.addEventListener('click', loadAuditLog);
+refreshModeratorsButton.addEventListener('click', loadModerators);
 chatFilterForm.addEventListener('submit', (event) => {
   event.preventDefault();
   chatPage = 1;

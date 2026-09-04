@@ -66,6 +66,20 @@ function login(socket, data) {
   socket.emit('login', { ...data, safetyAcknowledged: true });
 }
 
+async function signInModerator(url, credentials) {
+  const response = await fetch(`${url}/api/admin/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(credentials),
+  });
+  const data = await response.json();
+  return {
+    response,
+    data,
+    cookie: response.headers.get('set-cookie')?.split(';', 1)[0] || '',
+  };
+}
+
 test('matches shared interests and relays messages', async (t) => {
   const url = await createTestServer(t);
   const alice = await connectClient(t, url);
@@ -524,6 +538,219 @@ test('expires an admin session after its configured lifetime', async (t) => {
     headers: { Cookie: cookie },
   });
   assert.equal(expired.status, 401);
+});
+
+test('uses named moderator accounts, roles, and immediate session revocation', async (t) => {
+  const adminToken = 'test-admin-token-123';
+  const url = await createTestServer(t, { adminToken });
+  const bootstrapHeaders = {
+    Authorization: `Bearer ${adminToken}`,
+    'Content-Type': 'application/json',
+  };
+
+  async function createModerator(username, role) {
+    return fetch(`${url}/api/admin/moderators`, {
+      method: 'POST',
+      headers: bootstrapHeaders,
+      body: JSON.stringify({ username, role, password: 'safe-moderator-password' }),
+    });
+  }
+
+  const adminCreated = await createModerator('chief.admin', 'admin');
+  assert.equal(adminCreated.status, 201);
+  const adminAccount = (await adminCreated.json()).moderator;
+  assert.deepEqual(Object.keys(adminAccount).sort(), [
+    'active',
+    'createdAt',
+    'id',
+    'lastLoginAt',
+    'role',
+    'updatedAt',
+    'username',
+  ]);
+  assert.equal(adminAccount.username, 'chief.admin');
+  assert.equal(adminAccount.role, 'admin');
+
+  assert.equal((await createModerator('case.mod', 'moderator')).status, 201);
+  assert.equal((await createModerator('read.only', 'viewer')).status, 201);
+  const duplicate = await createModerator('case.mod', 'moderator');
+  assert.equal(duplicate.status, 409);
+
+  const adminSession = await signInModerator(url, {
+    username: 'chief.admin',
+    password: 'safe-moderator-password',
+  });
+  assert.equal(adminSession.response.status, 200);
+  assert.equal(adminSession.data.moderator.role, 'admin');
+  assert.match(adminSession.cookie, /^ghostchat_admin_session=/);
+
+  const listed = await fetch(`${url}/api/admin/moderators`, {
+    headers: { Cookie: adminSession.cookie },
+  });
+  assert.equal(listed.status, 200);
+  const accounts = (await listed.json()).moderators;
+  assert.deepEqual(accounts.map((account) => account.username).sort(), [
+    'case.mod',
+    'chief.admin',
+    'read.only',
+  ]);
+  const moderatorAccount = accounts.find((account) => account.username === 'case.mod');
+
+  const moderatorSession = await signInModerator(url, {
+    username: 'case.mod',
+    password: 'safe-moderator-password',
+  });
+  assert.equal(moderatorSession.response.status, 200);
+  assert.equal(moderatorSession.data.moderator.role, 'moderator');
+  assert.equal(
+    (
+      await fetch(`${url}/api/admin/moderators`, {
+        headers: { Cookie: moderatorSession.cookie },
+      })
+    ).status,
+    403,
+  );
+  assert.equal(
+    (
+      await fetch(`${url}/api/admin/reports/not-a-real-report`, {
+        method: 'PATCH',
+        headers: { Cookie: moderatorSession.cookie, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'reviewed' }),
+      })
+    ).status,
+    404,
+  );
+
+  const demoted = await fetch(`${url}/api/admin/moderators/${moderatorAccount.id}`, {
+    method: 'PATCH',
+    headers: { Cookie: adminSession.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ role: 'viewer' }),
+  });
+  assert.equal(demoted.status, 200);
+  assert.equal((await demoted.json()).moderator.role, 'viewer');
+  const updatedSession = await fetch(`${url}/api/admin/session`, {
+    headers: { Cookie: moderatorSession.cookie },
+  });
+  assert.equal(updatedSession.status, 200);
+  assert.equal((await updatedSession.json()).moderator.role, 'viewer');
+  assert.equal(
+    (
+      await fetch(`${url}/api/admin/reports/not-a-real-report`, {
+        method: 'PATCH',
+        headers: { Cookie: moderatorSession.cookie, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'reviewed' }),
+      })
+    ).status,
+    403,
+  );
+
+  const viewerSession = await signInModerator(url, {
+    username: 'read.only',
+    password: 'safe-moderator-password',
+  });
+  assert.equal(viewerSession.response.status, 200);
+  assert.equal(
+    (
+      await fetch(`${url}/api/admin/reports`, {
+        headers: { Cookie: viewerSession.cookie },
+      })
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await fetch(`${url}/api/admin/reports/not-a-real-report`, {
+        method: 'PATCH',
+        headers: { Cookie: viewerSession.cookie, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'reviewed' }),
+      })
+    ).status,
+    403,
+  );
+
+  const disabled = await fetch(`${url}/api/admin/moderators/${moderatorAccount.id}`, {
+    method: 'PATCH',
+    headers: { Cookie: adminSession.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ active: false }),
+  });
+  assert.equal(disabled.status, 200);
+  assert.equal((await disabled.json()).moderator.active, false);
+
+  assert.equal(
+    (
+      await fetch(`${url}/api/admin/session`, {
+        headers: { Cookie: moderatorSession.cookie },
+      })
+    ).status,
+    401,
+  );
+  assert.equal(
+    (
+      await fetch(`${url}/api/admin/reports`, {
+        headers: { Cookie: moderatorSession.cookie },
+      })
+    ).status,
+    401,
+  );
+
+  const audit = await fetch(`${url}/api/admin/audit-log?limit=10`, {
+    headers: { Cookie: adminSession.cookie },
+  });
+  assert.equal(audit.status, 200);
+  const disableEvent = (await audit.json()).events.find(
+    (event) =>
+      event.type === 'moderator_updated' && event.targetModeratorId === moderatorAccount.id,
+  );
+  assert.equal(disableEvent.actorUsername, 'chief.admin');
+  assert.equal(disableEvent.actorRole, 'admin');
+  assert.deepEqual(disableEvent.changedFields, ['disabled']);
+});
+
+test('persists hashed moderator credentials across server restarts', async (t) => {
+  const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'anon-chat-moderators-'));
+  t.after(() => fs.rm(dataDir, { recursive: true, force: true }));
+  const logger = { info() {}, error() {}, warn() {} };
+
+  async function startServer(adminToken = '') {
+    const chat = createChatServer({ logger, dataDir, adminToken });
+    await new Promise((resolve, reject) => {
+      chat.server.once('error', reject);
+      chat.server.listen(0, '127.0.0.1', resolve);
+    });
+    return { chat, url: `http://127.0.0.1:${chat.server.address().port}` };
+  }
+
+  const first = await startServer('bootstrap-token-123');
+  const created = await fetch(`${first.url}/api/admin/moderators`, {
+    method: 'POST',
+    headers: {
+      Authorization: 'Bearer bootstrap-token-123',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      username: 'persistent.admin',
+      role: 'admin',
+      password: 'durable-moderator-password',
+    }),
+  });
+  assert.equal(created.status, 201);
+  await first.chat.close();
+
+  const stored = await fs.readFile(path.join(dataDir, 'moderators.json'), 'utf8');
+  assert.doesNotMatch(stored, /durable-moderator-password/);
+  assert.match(stored, /"passwordHash"/);
+  assert.match(stored, /"passwordSalt"/);
+
+  // A named account remains usable even if the bootstrap token is not configured after restart.
+  const second = await startServer();
+  t.after(() => second.chat.close());
+  const session = await signInModerator(second.url, {
+    username: 'persistent.admin',
+    password: 'durable-moderator-password',
+  });
+  assert.equal(session.response.status, 200);
+  assert.equal(session.data.moderator.username, 'persistent.admin');
+  assert.equal(session.data.moderator.role, 'admin');
 });
 
 test('persists chat messages and exposes them only to admins', async (t) => {

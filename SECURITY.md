@@ -25,10 +25,16 @@ This project is an anonymous chat service. A few design points worth knowing:
 - The `18+` confirmation is a self-attestation, not identity or age verification.
 - Blocking uses a browser-local random `clientId`; it is a user-safety feature,
   not an account-level ban.
-- The moderation dashboard uses `ADMIN_TOKEN` only during sign-in, then protects
-  browser requests with a short-lived, `HttpOnly`, `SameSite=Strict` session
-  cookie. Never commit the token. Run the app behind HTTPS and an IP-level rate
-  limit in production.
+- The moderation dashboard uses `ADMIN_TOKEN` to bootstrap a named admin account
+  and as an emergency server-to-server credential. Browser requests use a
+  short-lived, `HttpOnly`, `SameSite=Strict` session cookie. Named moderator
+  passwords are salted `scrypt` hashes in `DATA_DIR/moderators.json`; never
+  commit either that file or the token. Run the app behind HTTPS and an IP-level
+  rate limit in production.
+- Roles are enforced server-side: `admin` manages moderator accounts, `moderator`
+  handles reports, bans, and transcript deletion, and `viewer` is read-only.
+  Account status and role are looked up on every request, so disabling an account
+  also invalidates its existing sessions. Keep at least one active admin account.
 - Existing automation may still use `Authorization: Bearer <ADMIN_TOKEN>`; keep
   those requests server-to-server and never expose the header in browser code.
 

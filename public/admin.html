@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="robots" content="noindex, nofollow" />
     <title>GhostChat Moderation</title>
-    <link rel="stylesheet" href="admin.css?v=4" />
+    <link rel="stylesheet" href="admin.css?v=5" />
   </head>
   <body>
     <main class="admin-shell">
@@ -32,17 +32,36 @@
           </p>
         </div>
         <form id="token-form" class="token-form">
-          <label class="sr-only" for="admin-token">Admin token</label>
-          <input
-            id="admin-token"
-            type="password"
-            autocomplete="off"
-            placeholder="Enter admin token"
-            required
-          />
+          <div class="credential-grid">
+            <label class="sr-only" for="admin-username">Moderator username</label>
+            <input
+              id="admin-username"
+              type="text"
+              autocomplete="username"
+              placeholder="Moderator username"
+            />
+            <label class="sr-only" for="admin-password">Moderator password</label>
+            <input
+              id="admin-password"
+              type="password"
+              autocomplete="current-password"
+              placeholder="Password (12+ characters)"
+            />
+          </div>
+          <div class="bootstrap-row">
+            <label class="sr-only" for="admin-token">Bootstrap admin token</label>
+            <input
+              id="admin-token"
+              type="password"
+              autocomplete="off"
+              placeholder="Bootstrap token (first setup / emergency)"
+            />
+            <span class="bootstrap-hint">Use the token only to bootstrap or recover access.</span>
+          </div>
           <button id="sign-in" type="submit">Sign in</button>
           <button id="admin-logout" type="button" class="secondary" hidden>Sign out</button>
         </form>
+        <p id="principal-summary" class="principal-summary" hidden></p>
       </section>
 
       <div class="admin-status-row">
@@ -112,6 +131,20 @@
             tabindex="-1"
           >
             Activity
+          </button>
+          <button
+            id="tab-team"
+            class="admin-tab"
+            type="button"
+            role="tab"
+            aria-selected="false"
+            aria-controls="panel-team"
+            data-tab="team"
+            data-admin-only
+            hidden
+            tabindex="-1"
+          >
+            Team
           </button>
           <button
             id="tab-chats"
@@ -259,6 +292,57 @@
         </section>
 
         <section
+          id="panel-team"
+          class="tab-panel"
+          role="tabpanel"
+          aria-labelledby="tab-team"
+          data-tab-panel="team"
+          data-admin-only
+          hidden
+        >
+          <section class="admin-section team-section" aria-labelledby="team-title">
+            <div class="section-heading">
+              <div>
+                <span class="section-kicker">Access control</span>
+                <h2 id="team-title">Moderator team</h2>
+                <p>Create named accounts and change access without sharing the bootstrap token.</p>
+              </div>
+              <button id="refresh-moderators" type="button" class="secondary">Refresh team</button>
+            </div>
+            <form id="moderator-form" class="moderator-form">
+              <label for="moderator-username">Username</label>
+              <input
+                id="moderator-username"
+                name="username"
+                autocomplete="off"
+                placeholder="e.g. linh.mod"
+                required
+              />
+              <label for="moderator-role">Role</label>
+              <select id="moderator-role" name="role">
+                <option value="moderator">Moderator · review and act</option>
+                <option value="viewer">Viewer · read only</option>
+                <option value="admin">Admin · manage the team</option>
+              </select>
+              <label for="moderator-password">Temporary password</label>
+              <input
+                id="moderator-password"
+                name="password"
+                type="password"
+                autocomplete="new-password"
+                placeholder="12+ characters"
+                required
+              />
+              <button id="create-moderator" type="submit">Create account</button>
+            </form>
+            <p class="form-help">
+              Usernames use 3–32 lowercase letters, numbers, dots, dashes, or underscores.
+            </p>
+            <section id="moderators" class="moderator-list" aria-live="polite"></section>
+          </section>
+        </section>
+
+        <section
           id="panel-chats"
           class="tab-panel"
           role="tabpanel"
@@ -299,6 +383,6 @@
       </div>
     </main>
 
-    <script src="admin.js?v=9"></script>
+    <script src="admin.js?v=10"></script>
   </body>
 </html>

@@ -151,10 +151,15 @@ function countLinks(text) {
 }
 const REPORT_STATUSES = new Set(['new', 'reviewed', 'resolved']);
 const MODERATION_ACTIONS = new Set(['none', 'chat_block', 'permanent_ban']);
+const MODERATOR_ROLES = new Set(['admin', 'moderator', 'viewer']);
 const CHAT_BLOCK_DURATION_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_ADMIN_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const ADMIN_SESSION_COOKIE = 'ghostchat_admin_session';
 const ADMIN_SESSION_COOKIE_PATH = '/api/admin';
+const MIN_MODERATOR_PASSWORD_LENGTH = 12;
+const MAX_MODERATOR_PASSWORD_LENGTH = 128;
+const RESERVED_MODERATOR_USERNAMES = new Set(['env-admin', 'system']);
+const DUMMY_MODERATOR_CREDENTIAL = { passwordSalt: '0'.repeat(32), passwordHash: '0'.repeat(128) };
 const LANGUAGES = new Set(['any', 'vi', 'en']);
 const REACTION_EMOJIS = new Set(['👍', '❤️', '😂', '😮', '😢', '🔥']);
 
@@ -170,6 +175,49 @@ function cleanText(value) {
       .trim()
       .replace(/\s+/g, ' ')
   );
+}
+
+function normalizeModeratorUsername(value) {
+  if (typeof value !== 'string') return null;
+  const username = cleanText(value).toLowerCase();
+  return /^[a-z0-9][a-z0-9._-]{2,31}$/.test(username) && !RESERVED_MODERATOR_USERNAMES.has(username)
+    ? username
+    : null;
+}
+
+function parseModeratorPassword(value) {
+  if (typeof value !== 'string') return { error: 'Moderator password must be text.' };
+  if (value.length < MIN_MODERATOR_PASSWORD_LENGTH) {
+    return {
+      error: `Moderator passwords must be at least ${MIN_MODERATOR_PASSWORD_LENGTH} characters.`,
+    };
+  }
+  if (value.length > MAX_MODERATOR_PASSWORD_LENGTH) {
+    return {
+      error: `Moderator passwords must be at most ${MAX_MODERATOR_PASSWORD_LENGTH} characters.`,
+    };
+  }
+  return { value };
+}
+
+function isModeratorId(value) {
+  return typeof value === 'string' && /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(value);
+}
+
+function toPublicModerator(moderator) {
+  return {
+    id: moderator.id,
+    username: moderator.username,
+    role: moderator.role,
+    active: moderator.active,
+    createdAt: moderator.createdAt,
+    updatedAt: moderator.updatedAt,
+    lastLoginAt: moderator.lastLoginAt ?? null,
+  };
+}
+
+function isActiveAdmin(moderator) {
+  return moderator.active === true && moderator.role === 'admin';
 }
 
 function isClientId(value) {
@@ -764,6 +812,163 @@ function createAuditStore(dataDirectory) {
   };
 }
 
+function hashModeratorPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  return new Promise((resolve, reject) => {
+    crypto.scrypt(password, salt, 64, (error, derivedKey) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve({ salt, hash: derivedKey.toString('hex') });
+    });
+  });
+}
+
+function verifyModeratorPassword(password, moderator) {
+  if (
+    typeof password !== 'string' ||
+    typeof moderator?.passwordSalt !== 'string' ||
+    !/^[a-f0-9]{32}$/i.test(moderator.passwordSalt) ||
+    typeof moderator.passwordHash !== 'string' ||
+    !/^[a-f0-9]{128}$/i.test(moderator.passwordHash)
+  ) {
+    return Promise.resolve(false);
+  }
+
+  return new Promise((resolve, reject) => {
+    crypto.scrypt(password, moderator.passwordSalt, 64, (error, derivedKey) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      const expected = Buffer.from(moderator.passwordHash, 'hex');
+      resolve(
+        expected.length === derivedKey.length && crypto.timingSafeEqual(expected, derivedKey),
+      );
+    });
+  });
+}
+
+function isStoredModerator(value) {
+  return (
+    isPlainObject(value) &&
+    isModeratorId(value.id) &&
+    normalizeModeratorUsername(value.username) === value.username &&
+    MODERATOR_ROLES.has(value.role) &&
+    typeof value.active === 'boolean' &&
+    typeof value.passwordSalt === 'string' &&
+    /^[a-f0-9]{32}$/i.test(value.passwordSalt) &&
+    typeof value.passwordHash === 'string' &&
+    /^[a-f0-9]{128}$/i.test(value.passwordHash) &&
+    typeof value.createdAt === 'string' &&
+    typeof value.updatedAt === 'string' &&
+    (value.lastLoginAt === null || typeof value.lastLoginAt === 'string')
+  );
+}
+
+// Moderator credentials are durable, while sessions remain short-lived and in memory.
+function createModeratorStore(dataDirectory) {
+  const moderatorsFile = path.join(dataDirectory, 'moderators.json');
+  let moderators = [];
+  let initialized = false;
+  let operationQueue = Promise.resolve();
+
+  function enqueue(operation) {
+    const task = operationQueue.then(operation, operation);
+    operationQueue = task.catch(() => undefined);
+    return task;
+  }
+
+  async function initialize() {
+    if (initialized) return;
+    await fs.mkdir(dataDirectory, { recursive: true });
+    try {
+      const contents = await fs.readFile(moderatorsFile, 'utf8');
+      const parsed = JSON.parse(contents);
+      if (!Array.isArray(parsed)) throw new Error('Moderator store must contain an array.');
+      moderators = parsed.filter(isStoredModerator);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      moderators = [];
+    }
+    initialized = true;
+  }
+
+  async function persist() {
+    await fs.mkdir(dataDirectory, { recursive: true });
+    const temporaryFile = `${moderatorsFile}.${process.pid}.${Date.now()}.tmp`;
+    await fs.writeFile(temporaryFile, `${JSON.stringify(moderators, null, 2)}\n`, 'utf8');
+    await fs.rename(temporaryFile, moderatorsFile);
+  }
+
+  return {
+    list: () =>
+      enqueue(async () => {
+        await initialize();
+        return moderators.map((moderator) => toPublicModerator(moderator));
+      }),
+    hasActive: () =>
+      enqueue(async () => {
+        await initialize();
+        return moderators.some((moderator) => moderator.active);
+      }),
+    findByUsername: (username) =>
+      enqueue(async () => {
+        await initialize();
+        const moderator = moderators.find((item) => item.username === username);
+        return moderator ? copyValue(moderator) : null;
+      }),
+    getActive: (id) =>
+      enqueue(async () => {
+        await initialize();
+        const moderator = moderators.find((item) => item.id === id && item.active);
+        return moderator ? copyValue(moderator) : null;
+      }),
+    create: (candidate) =>
+      enqueue(async () => {
+        await initialize();
+        if (!isStoredModerator(candidate)) return { error: 'invalid' };
+        if (moderators.some((moderator) => moderator.username === candidate.username)) {
+          return { error: 'username_taken' };
+        }
+        if (!moderators.some(isActiveAdmin) && candidate.role !== 'admin') {
+          return { error: 'first_admin_required' };
+        }
+        moderators.push(copyValue(candidate));
+        await persist();
+        return { moderator: toPublicModerator(candidate) };
+      }),
+    update: (id, changes) =>
+      enqueue(async () => {
+        await initialize();
+        const index = moderators.findIndex((moderator) => moderator.id === id);
+        if (index === -1) return { error: 'not_found' };
+
+        const next = { ...moderators[index], ...changes, updatedAt: new Date().toISOString() };
+        const nextModerators = moderators.map((moderator, itemIndex) =>
+          itemIndex === index ? next : moderator,
+        );
+        if (!nextModerators.some(isActiveAdmin)) return { error: 'last_active_admin' };
+
+        moderators[index] = next;
+        await persist();
+        return { moderator: toPublicModerator(next) };
+      }),
+    touchLogin: (id) =>
+      enqueue(async () => {
+        await initialize();
+        const index = moderators.findIndex((moderator) => moderator.id === id && moderator.active);
+        if (index === -1) return null;
+        const now = new Date().toISOString();
+        moderators[index] = { ...moderators[index], lastLoginAt: now, updatedAt: now };
+        await persist();
+        return toPublicModerator(moderators[index]);
+      }),
+    flush: () => operationQueue,
+  };
+}
+
 function createChatServer({
   logger = console,
   dataDir = process.env.DATA_DIR || path.join(__dirname, 'data'),
@@ -787,6 +992,7 @@ function createChatServer({
   const chatStore = createChatStore(dataDir, Number.isFinite(retentionDays) ? retentionDays : 30);
   const banStore = createBanStore(dataDir);
   const auditStore = createAuditStore(dataDir);
+  const moderatorStore = createModeratorStore(dataDir);
   const httpRateLimiter = createIpRateLimiter(LIMITS.httpRate);
   const connectionRateLimiter = createIpRateLimiter(LIMITS.connectionRate);
   const adminLoginRateLimiter = createIpRateLimiter(LIMITS.adminLoginRate);
@@ -1027,12 +1233,25 @@ function createChatServer({
     }
   }
 
-  async function recordModerationEvent(event) {
+  function getBootstrapPrincipal() {
+    return {
+      id: 'env-admin',
+      username: 'env-admin',
+      role: 'admin',
+      active: true,
+      source: 'bootstrap',
+    };
+  }
+
+  async function recordModerationEvent(event, actor = null) {
     try {
       await auditStore.append({
         id: crypto.randomUUID(),
         occurredAt: new Date().toISOString(),
-        actor: 'admin',
+        actor: actor?.username || 'system',
+        actorId: actor?.id || null,
+        actorUsername: actor?.username || 'system',
+        actorRole: actor?.role || 'system',
         ...event,
       });
     } catch (error) {
@@ -1066,7 +1285,7 @@ function createChatServer({
     return parseCookies(request.get('cookie'))[ADMIN_SESSION_COOKIE] || '';
   }
 
-  function getValidAdminSession(request) {
+  async function getValidAdminSession(request) {
     const sessionId = getAdminSessionId(request);
     if (!sessionId) return null;
 
@@ -1075,13 +1294,35 @@ function createChatServer({
       adminSessions.delete(sessionId);
       return null;
     }
-    return { id: sessionId, ...session };
+
+    if (session.principalType === 'bootstrap') {
+      if (!adminToken) {
+        adminSessions.delete(sessionId);
+        return null;
+      }
+      return { id: sessionId, ...session, principal: getBootstrapPrincipal() };
+    }
+
+    if (!session.moderatorId) {
+      adminSessions.delete(sessionId);
+      return null;
+    }
+    const moderator = await moderatorStore.getActive(session.moderatorId);
+    if (!moderator) {
+      // Looking up the account on every request makes disable/role changes immediate.
+      adminSessions.delete(sessionId);
+      return null;
+    }
+    return { id: sessionId, ...session, principal: toPublicModerator(moderator) };
   }
 
-  function createAdminSession() {
+  function createAdminSession(principal) {
     const id = crypto.randomBytes(32).toString('hex');
     const expiresAt = Date.now() + sessionTtlMs;
-    adminSessions.set(id, { createdAt: Date.now(), expiresAt });
+    const session = { createdAt: Date.now(), expiresAt };
+    if (principal.source === 'bootstrap') session.principalType = 'bootstrap';
+    else session.moderatorId = principal.id;
+    adminSessions.set(id, session);
     return { id, expiresAt };
   }
 
@@ -1134,24 +1375,23 @@ function createChatServer({
     }
   }
 
-  function hasAdminAccess(request) {
-    if (!adminToken) return false;
-
-    if (getValidAdminSession(request)) return true;
+  async function getAdminPrincipal(request) {
+    const session = await getValidAdminSession(request);
+    if (session) return session.principal;
 
     // Keep bearer tokens available for scripts that already use the admin API. The browser
     // console authenticates with the short-lived HttpOnly session cookie instead.
     const authorization = request.get('authorization') || '';
     const suppliedToken = authorization.startsWith('Bearer ') ? authorization.slice(7) : '';
-    return tokenMatches(suppliedToken);
+    return tokenMatches(suppliedToken) ? getBootstrapPrincipal() : null;
   }
 
-  function requireAdmin(request, response, next) {
+  async function requireAdmin(request, response, next) {
     response.set('Cache-Control', 'no-store');
-    if (!adminToken) {
-      response
-        .status(503)
-        .json({ error: 'Admin access is disabled. Configure ADMIN_TOKEN first.' });
+    if (!adminToken && !(await moderatorStore.hasActive())) {
+      response.status(503).json({
+        error: 'Moderation access is disabled. Configure ADMIN_TOKEN or create an account.',
+      });
       return;
     }
 
@@ -1160,14 +1400,37 @@ function createChatServer({
       return;
     }
 
-    if (!hasAdminAccess(request)) {
-      if (getAdminSessionId(request)) clearAdminSessionCookie(request, response);
-      response.status(401).json({ error: 'A valid admin session or token is required.' });
+    let principal;
+    try {
+      principal = await getAdminPrincipal(request);
+    } catch (error) {
+      logError(error);
+      response.status(500).json({ error: 'Could not verify moderation access.' });
       return;
     }
 
+    if (!principal) {
+      if (getAdminSessionId(request)) clearAdminSessionCookie(request, response);
+      response.status(401).json({ error: 'A valid moderator session or token is required.' });
+      return;
+    }
+
+    request.admin = principal;
     next();
   }
+
+  function requireRole(...roles) {
+    return (request, response, next) => {
+      if (!request.admin || !roles.includes(request.admin.role)) {
+        response.status(403).json({ error: 'Your moderator role cannot perform this action.' });
+        return;
+      }
+      next();
+    };
+  }
+
+  const requireModerator = requireRole('admin', 'moderator');
+  const requireAdminRole = requireRole('admin');
 
   app.use((request, response, next) => {
     // Keep health checks cheap and unthrottled so uptime monitors are never rate limited.
@@ -1209,16 +1472,32 @@ function createChatServer({
     });
   });
 
-  app.post('/api/admin/login', (request, response) => {
+  function serializeAdminPrincipal(principal) {
+    return {
+      id: principal.id,
+      username: principal.username,
+      role: principal.role,
+      active: principal.active !== false,
+      ...(principal.createdAt ? { createdAt: principal.createdAt } : {}),
+      ...(principal.updatedAt ? { updatedAt: principal.updatedAt } : {}),
+      ...(principal.lastLoginAt ? { lastLoginAt: principal.lastLoginAt } : {}),
+    };
+  }
+
+  async function isModerationConfigured() {
+    return Boolean(adminToken) || (await moderatorStore.hasActive());
+  }
+
+  app.post('/api/admin/login', async (request, response) => {
     response.set('Cache-Control', 'no-store');
     if (!isSameOriginRequest(request)) {
       response.status(403).json({ error: 'Admin sign-in must come from the same origin.' });
       return;
     }
-    if (!adminToken) {
+    if (!(await isModerationConfigured())) {
       response
         .status(503)
-        .json({ error: 'Admin access is disabled. Configure ADMIN_TOKEN first.' });
+        .json({ error: 'Moderation access is disabled. Configure ADMIN_TOKEN first.' });
       return;
     }
 
@@ -1228,8 +1507,28 @@ function createChatServer({
       return;
     }
 
-    const suppliedToken = request.body?.token ?? request.body?.adminToken;
-    if (!tokenMatches(suppliedToken)) {
+    const body = isPlainObject(request.body) ? request.body : {};
+    let principal = null;
+    const hasAccountCredentials = 'username' in body || 'password' in body;
+    if (hasAccountCredentials) {
+      const username = normalizeModeratorUsername(body.username);
+      const password = parseModeratorPassword(body.password);
+      if (username && !password.error) {
+        const moderator = await moderatorStore.findByUsername(username);
+        const passwordMatches = await verifyModeratorPassword(
+          password.value,
+          moderator || DUMMY_MODERATOR_CREDENTIAL,
+        );
+        if (moderator?.active && passwordMatches) {
+          principal = await moderatorStore.touchLogin(moderator.id);
+        }
+      }
+    } else {
+      const suppliedToken = body.token ?? body.adminToken;
+      if (tokenMatches(suppliedToken)) principal = getBootstrapPrincipal();
+    }
+
+    if (!principal) {
       response.status(401).json({ error: 'Invalid admin credentials.' });
       return;
     }
@@ -1237,35 +1536,42 @@ function createChatServer({
     const previousSessionId = getAdminSessionId(request);
     if (previousSessionId) adminSessions.delete(previousSessionId);
 
-    const session = createAdminSession();
+    const session = createAdminSession(principal);
     setAdminSessionCookie(request, response, session.id, Math.ceil(sessionTtlMs / 1000));
     response.json({
       authenticated: true,
       expiresAt: new Date(session.expiresAt).toISOString(),
+      moderator: serializeAdminPrincipal(principal),
     });
   });
 
-  app.get('/api/admin/session', (request, response) => {
+  app.get('/api/admin/session', async (request, response) => {
     response.set('Cache-Control', 'no-store');
-    if (!adminToken) {
+    if (!(await isModerationConfigured())) {
       response
         .status(503)
-        .json({ error: 'Admin access is disabled. Configure ADMIN_TOKEN first.' });
+        .json({ error: 'Moderation access is disabled. Configure ADMIN_TOKEN first.' });
       return;
     }
 
-    const session = getValidAdminSession(request);
+    const session = await getValidAdminSession(request);
     if (session) {
       response.json({
         authenticated: true,
         expiresAt: new Date(session.expiresAt).toISOString(),
+        moderator: serializeAdminPrincipal(session.principal),
       });
       return;
     }
 
     // Allow existing API clients to check access while the browser migrates to sessions.
-    if (hasAdminAccess(request)) {
-      response.json({ authenticated: true, expiresAt: null });
+    const principal = await getAdminPrincipal(request);
+    if (principal) {
+      response.json({
+        authenticated: true,
+        expiresAt: null,
+        moderator: serializeAdminPrincipal(principal),
+      });
       return;
     }
 
@@ -1284,6 +1590,170 @@ function createChatServer({
     clearAdminSessionCookie(request, response);
     response.json({ authenticated: false });
   });
+
+  app.get('/api/admin/moderators', requireAdmin, requireAdminRole, async (request, response) => {
+    try {
+      response.json({ moderators: await moderatorStore.list() });
+    } catch (error) {
+      logError(error);
+      response.status(500).json({ error: 'Could not load moderator accounts.' });
+    }
+  });
+
+  app.post('/api/admin/moderators', requireAdmin, requireAdminRole, async (request, response) => {
+    try {
+      const body = isPlainObject(request.body) ? request.body : {};
+      const username = normalizeModeratorUsername(body.username);
+      if (!username) {
+        response.status(400).json({
+          error:
+            'Username must be 3-32 characters using letters, numbers, dots, dashes, or underscores.',
+        });
+        return;
+      }
+      const password = parseModeratorPassword(body.password);
+      if (password.error) {
+        response.status(400).json({ error: password.error });
+        return;
+      }
+      const role = body.role ?? 'moderator';
+      if (typeof role !== 'string' || !MODERATOR_ROLES.has(role)) {
+        response.status(400).json({ error: 'Choose a valid moderator role.' });
+        return;
+      }
+
+      const passwordData = await hashModeratorPassword(password.value);
+      const now = new Date().toISOString();
+      const result = await moderatorStore.create({
+        id: crypto.randomUUID(),
+        username,
+        role,
+        active: true,
+        passwordHash: passwordData.hash,
+        passwordSalt: passwordData.salt,
+        createdAt: now,
+        updatedAt: now,
+        lastLoginAt: null,
+      });
+      if (result.error === 'username_taken') {
+        response.status(409).json({ error: 'That moderator username is already in use.' });
+        return;
+      }
+      if (result.error === 'first_admin_required') {
+        response
+          .status(409)
+          .json({ error: 'The first moderator account must use the admin role.' });
+        return;
+      }
+      if (result.error) {
+        response.status(400).json({ error: 'Moderator account data is invalid.' });
+        return;
+      }
+
+      await recordModerationEvent(
+        {
+          type: 'moderator_created',
+          targetModeratorId: result.moderator.id,
+          targetUsername: result.moderator.username,
+          targetRole: result.moderator.role,
+          note: 'Moderator account created.',
+        },
+        request.admin,
+      );
+      response.status(201).json({ moderator: result.moderator });
+    } catch (error) {
+      logError(error);
+      response.status(500).json({ error: 'Could not create moderator account.' });
+    }
+  });
+
+  async function updateModeratorAccount(request, response, forcedChanges = {}) {
+    try {
+      if (!isModeratorId(request.params.id)) {
+        response.status(400).json({ error: 'Invalid moderator ID.' });
+        return;
+      }
+      const body = {
+        ...(isPlainObject(request.body) ? request.body : {}),
+        ...forcedChanges,
+      };
+      const changes = {};
+      const changedFields = [];
+
+      if ('role' in body) {
+        if (typeof body.role !== 'string' || !MODERATOR_ROLES.has(body.role)) {
+          response.status(400).json({ error: 'Choose a valid moderator role.' });
+          return;
+        }
+        changes.role = body.role;
+        changedFields.push('role');
+      }
+      if ('active' in body) {
+        if (typeof body.active !== 'boolean') {
+          response.status(400).json({ error: 'Moderator active state must be boolean.' });
+          return;
+        }
+        changes.active = body.active;
+        changedFields.push(body.active ? 'enabled' : 'disabled');
+      }
+      if ('password' in body) {
+        const password = parseModeratorPassword(body.password);
+        if (password.error) {
+          response.status(400).json({ error: password.error });
+          return;
+        }
+        const passwordData = await hashModeratorPassword(password.value);
+        changes.passwordHash = passwordData.hash;
+        changes.passwordSalt = passwordData.salt;
+        changedFields.push('password');
+      }
+      if (!changedFields.length) {
+        response.status(400).json({ error: 'No moderator changes were provided.' });
+        return;
+      }
+
+      const result = await moderatorStore.update(request.params.id, changes);
+      if (result.error === 'not_found') {
+        response.status(404).json({ error: 'Moderator account not found.' });
+        return;
+      }
+      if (result.error === 'last_active_admin') {
+        response.status(409).json({ error: 'Keep at least one active admin account.' });
+        return;
+      }
+      if (result.error) {
+        response.status(400).json({ error: 'Moderator account data is invalid.' });
+        return;
+      }
+
+      await recordModerationEvent(
+        {
+          type: 'moderator_updated',
+          targetModeratorId: result.moderator.id,
+          targetUsername: result.moderator.username,
+          targetRole: result.moderator.role,
+          targetActive: result.moderator.active,
+          changedFields,
+          note: `Moderator account updated: ${changedFields.join(', ')}.`,
+        },
+        request.admin,
+      );
+      response.json({ moderator: result.moderator });
+    } catch (error) {
+      logError(error);
+      response.status(500).json({ error: 'Could not update moderator account.' });
+    }
+  }
+
+  app.patch('/api/admin/moderators/:id', requireAdmin, requireAdminRole, updateModeratorAccount);
+  app.delete(
+    '/api/admin/moderators/:id',
+    requireAdmin,
+    requireAdminRole,
+    async (request, response) => {
+      await updateModeratorAccount(request, response, { active: false });
+    },
+  );
 
   // Do not let the static-file middleware expose the admin document at a predictable path.
   app.get('/admin.html', (request, response) => {
@@ -1353,33 +1823,41 @@ function createChatServer({
       response.status(500).json({ error: 'Could not load moderation log.' });
     }
   });
-  app.delete('/api/admin/bans/:clientId', requireAdmin, async (request, response) => {
-    try {
-      if (!isClientId(request.params.clientId)) {
-        response.status(400).json({ error: 'Invalid client ID.' });
-        return;
+  app.delete(
+    '/api/admin/bans/:clientId',
+    requireAdmin,
+    requireModerator,
+    async (request, response) => {
+      try {
+        if (!isClientId(request.params.clientId)) {
+          response.status(400).json({ error: 'Invalid client ID.' });
+          return;
+        }
+        const liftedBan = await liftBan(request.params.clientId);
+        if (!liftedBan) {
+          response.status(404).json({ error: 'Active ban not found.' });
+          return;
+        }
+        await recordModerationEvent(
+          {
+            type: 'ban_lifted',
+            clientId: request.params.clientId,
+            alias: liftedBan.alias || '',
+            reportId: liftedBan.reportId || null,
+            moderationAction: liftedBan.action || 'automatic',
+            reason: liftedBan.reason || '',
+            note: '',
+          },
+          request.admin,
+        );
+        response.json({ clientId: request.params.clientId });
+      } catch (error) {
+        logError(error);
+        response.status(500).json({ error: 'Could not lift the ban.' });
       }
-      const liftedBan = await liftBan(request.params.clientId);
-      if (!liftedBan) {
-        response.status(404).json({ error: 'Active ban not found.' });
-        return;
-      }
-      await recordModerationEvent({
-        type: 'ban_lifted',
-        clientId: request.params.clientId,
-        alias: liftedBan.alias || '',
-        reportId: liftedBan.reportId || null,
-        moderationAction: liftedBan.action || 'automatic',
-        reason: liftedBan.reason || '',
-        note: '',
-      });
-      response.json({ clientId: request.params.clientId });
-    } catch (error) {
-      logError(error);
-      response.status(500).json({ error: 'Could not lift the ban.' });
-    }
-  });
-  app.patch('/api/admin/reports/:id', requireAdmin, async (request, response) => {
+    },
+  );
+  app.patch('/api/admin/reports/:id', requireAdmin, requireModerator, async (request, response) => {
     try {
       const { status, moderationNote = '', moderationAction = 'none' } = request.body ?? {};
       if (!REPORT_STATUSES.has(status)) {
@@ -1419,16 +1897,19 @@ function createChatServer({
         await applyModerationAction(report, moderationAction);
       }
 
-      await recordModerationEvent({
-        type: 'report_reviewed',
-        reportId: report.id,
-        clientId: report.reportedUser.clientId,
-        alias: report.reportedUser.alias,
-        moderationAction: report.moderationAction,
-        status: report.status,
-        reason: report.reason,
-        note: report.moderationNote,
-      });
+      await recordModerationEvent(
+        {
+          type: 'report_reviewed',
+          reportId: report.id,
+          clientId: report.reportedUser.clientId,
+          alias: report.reportedUser.alias,
+          moderationAction: report.moderationAction,
+          status: report.status,
+          reason: report.reason,
+          note: report.moderationNote,
+        },
+        request.admin,
+      );
 
       response.json({ report });
     } catch (error) {
@@ -1501,13 +1982,21 @@ function createChatServer({
       response.status(500).json({ error: 'Could not load stored chat.' });
     }
   });
-  app.delete('/api/admin/chats/:id', requireAdmin, async (request, response) => {
+  app.delete('/api/admin/chats/:id', requireAdmin, requireModerator, async (request, response) => {
     try {
       const chat = await chatStore.remove(request.params.id);
       if (!chat) {
         response.status(404).json({ error: 'Chat not found.' });
         return;
       }
+      await recordModerationEvent(
+        {
+          type: 'transcript_deleted',
+          chatId: chat.id,
+          note: 'Stored transcript deleted.',
+        },
+        request.admin,
+      );
       response.json({ chat });
     } catch (error) {
       logError(error);
@@ -2347,6 +2836,7 @@ function createChatServer({
         io.close(async (error) => {
           try {
             await chatStore.flush();
+            await moderatorStore.flush();
             await auditStore.flush();
             if (redisClients) {
               await Promise.all([

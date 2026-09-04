@@ -20,7 +20,7 @@ Anonymous, one-on-one chat with language-compatible matching. GhostChat does not
 - Keep resolved reports in a separate archive and apply moderator actions such as a 24-hour chat block or permanent ban.
 - Store masked chat transcripts for admin review, with search, date filters, pagination, JSON/CSV export, deletion, and configurable automatic retention.
 - Organize the moderation dashboard into separate Overview, Reports, Resolved, Bans, Activity, and Chats tabs.
-- Protect browser admin access with short-lived, HttpOnly sessions, same-origin mutation checks, and login throttling.
+- Protect browser admin access with short-lived, HttpOnly sessions, same-origin mutation checks, login throttling, and named moderator roles.
 - Mask basic profanity, limit links per message, and auto-suspend clients that pass a report threshold.
 - Show a live count of people currently online alongside the queue status.
 - Server-side validation, message-size limits, queue limits, and per-socket flood controls.
@@ -50,19 +50,19 @@ npm test
 
 ## Configuration
 
-| Variable                  | Default                | Purpose                                                                                                           |
-| ------------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `PORT`                    | `3000`                 | HTTP and Socket.IO port.                                                                                          |
-| `DATA_DIR`                | `./data`               | Directory where durable reports, bans, and chat transcripts are stored.                                           |
-| `CHAT_RETENTION_DAYS`     | `30`                   | Number of days to retain completed chat transcripts. Set to `0` or a negative value to retain indefinitely.       |
-| `ADMIN_TOKEN`             | _(required for admin)_ | Secret used once to sign in to the moderation dashboard and API.                                                  |
-| `ADMIN_SESSION_TTL_HOURS` | `8`                    | Lifetime of the in-memory admin session created after sign-in.                                                    |
-| `ADMIN_COOKIE_SECURE`     | `auto`                 | Force the `Secure` flag on the admin cookie (`true`/`1`); it is automatic for HTTPS and production.               |
-| `ADMIN_PATH`              | `/admin`               | Secret URL path for the moderation dashboard. Use a random path in production; `/admin` returns 404 when changed. |
-| `REDIS_URL`               | _(optional)_           | Enables the Socket.IO Redis adapter for multi-instance deployments (e.g. `redis://localhost:6379`).               |
-| `PROFANITY_EXTRA`         | _(optional)_           | Comma-separated extra words to mask, added to the built-in list.                                                  |
-| `PROFANITY_FILE`          | _(optional)_           | Path to a JSON array of extra words to mask. Malformed or missing files are ignored.                              |
-| `TRUST_PROXY`             | `false`                | Set to `true`/`1` when behind a trusted reverse proxy so per-IP limits use the `X-Forwarded-For` client IP.       |
+| Variable                  | Default                       | Purpose                                                                                                           |
+| ------------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `PORT`                    | `3000`                        | HTTP and Socket.IO port.                                                                                          |
+| `DATA_DIR`                | `./data`                      | Directory where durable reports, bans, chat transcripts, moderator accounts, and audit logs are stored.           |
+| `CHAT_RETENTION_DAYS`     | `30`                          | Number of days to retain completed chat transcripts. Set to `0` or a negative value to retain indefinitely.       |
+| `ADMIN_TOKEN`             | _(recommended for bootstrap)_ | Secret used to bootstrap the first named admin account and for emergency API access.                              |
+| `ADMIN_SESSION_TTL_HOURS` | `8`                           | Lifetime of the in-memory admin session created after sign-in.                                                    |
+| `ADMIN_COOKIE_SECURE`     | `auto`                        | Force the `Secure` flag on the admin cookie (`true`/`1`); it is automatic for HTTPS and production.               |
+| `ADMIN_PATH`              | `/admin`                      | Secret URL path for the moderation dashboard. Use a random path in production; `/admin` returns 404 when changed. |
+| `REDIS_URL`               | _(optional)_                  | Enables the Socket.IO Redis adapter for multi-instance deployments (e.g. `redis://localhost:6379`).               |
+| `PROFANITY_EXTRA`         | _(optional)_                  | Comma-separated extra words to mask, added to the built-in list.                                                  |
+| `PROFANITY_FILE`          | _(optional)_                  | Path to a JSON array of extra words to mask. Malformed or missing files are ignored.                              |
+| `TRUST_PROXY`             | `false`                       | Set to `true`/`1` when behind a trusted reverse proxy so per-IP limits use the `X-Forwarded-For` client IP.       |
 
 To enable moderation, set a strong token before starting the app:
 
@@ -73,7 +73,7 @@ npm start
 
 When a local `.env` file exists, the app loads it automatically. Keep `.env` private and do not commit it.
 
-Open the configured `ADMIN_PATH` (for example `http://localhost:3000/admin`) and enter the token once. The server exchanges it for a short-lived, `HttpOnly`, `SameSite=Strict` session cookie; the browser console does not store the token or send it on every request. Sessions are held in memory and are invalidated when they expire, the server restarts, or you sign out. In production, set a random `ADMIN_PATH` as an additional layer; this path is not a replacement for `ADMIN_TOKEN`.
+Open the configured `ADMIN_PATH` (for example `http://localhost:3000/admin`) and use the bootstrap token once. The server exchanges it for a short-lived, `HttpOnly`, `SameSite=Strict` session cookie; the browser console does not store the token or send it on every request. From the Team tab, create named accounts with one of three roles: `admin` (full access and team management), `moderator` (review reports, lift bans, and delete transcripts), or `viewer` (read-only access). Passwords are stored as `scrypt` hashes in `DATA_DIR/moderators.json`, never as plaintext. Sessions are held in memory and re-check the account on every request, so disabling an account or changing its role takes effect immediately. Keep at least one active admin account. In production, set a random `ADMIN_PATH` as an additional layer; this path is not a replacement for `ADMIN_TOKEN`.
 
 The admin API still accepts `Authorization: Bearer <ADMIN_TOKEN>` for existing scripts and automation. Prefer the browser session flow for interactive access, and never put the token in a URL.
 
@@ -83,7 +83,7 @@ Blocks use an anonymous random ID stored only in the visitor's browser. The bloc
 
 The 18+ confirmation is a self-attestation, not identity or age verification. It is intended to set a clear entry rule and cannot prevent a determined visitor from bypassing it.
 
-Reports are validated, stored in `DATA_DIR/reports.json`, and also written as structured `REPORT {...}` server logs. Each new report includes the matching `chatId`, so moderators can open its transcript directly from the report card. Once resolved, a report moves to `DATA_DIR/resolved-reports.json` and appears in the separate admin archive. Moderators can optionally block the reported anonymous client for 24 hours or permanently revoke its access; active restrictions are listed in the admin Ban monitor and can be lifted there. Every report review, automatic suspension, and lifted ban is recorded in `DATA_DIR/moderation-log.json` and is available through the admin Moderation log. Because GhostChat has no accounts, enforcement uses the browser's anonymous client ID. Chat transcripts are stored in `DATA_DIR/chats.json` and can be searched, paginated, exported, or deleted through the admin dashboard and admin-only `/api/admin/chats`, `/api/admin/chats/export`, and `/api/admin/chats/:id` endpoints. Completed transcripts are pruned after `CHAT_RETENTION_DAYS`; active chats remain until they end. Establish a moderation process, publish a clear retention/privacy policy, and protect the `ADMIN_TOKEN` because stored messages can contain sensitive personal information.
+Reports are validated, stored in `DATA_DIR/reports.json`, and also written as structured `REPORT {...}` server logs. Each new report includes the matching `chatId`, so moderators can open its transcript directly from the report card. Once resolved, a report moves to `DATA_DIR/resolved-reports.json` and appears in the separate admin archive. Moderators can optionally block the reported anonymous client for 24 hours or permanently revoke its access; active restrictions are listed in the admin Ban monitor and can be lifted there. Every report review, automatic suspension, lifted ban, transcript deletion, and moderator-account change is recorded in `DATA_DIR/moderation-log.json` with the acting account identity. Because GhostChat has no public accounts, enforcement uses the browser's anonymous client ID. Chat transcripts are stored in `DATA_DIR/chats.json` and can be searched, paginated, exported, or deleted through the admin dashboard and admin-only `/api/admin/chats`, `/api/admin/chats/export`, and `/api/admin/chats/:id` endpoints. Completed transcripts are pruned after `CHAT_RETENTION_DAYS`; active chats remain until they end. Named moderator credentials are stored as salted `scrypt` hashes in `DATA_DIR/moderators.json`; this file is sensitive and must be backed up with the rest of the data directory. Establish a moderation process, publish a clear retention/privacy policy, and protect both `ADMIN_TOKEN` and the data directory because stored messages can contain sensitive personal information.
 
 Profanity masking covers a basic built-in word list. Extend it at runtime without editing code by setting `PROFANITY_EXTRA` (comma-separated words) and/or `PROFANITY_FILE` (a JSON array of words); both are additive to the defaults. Auto-suspension is a lightweight safeguard: when an anonymous client is reported enough times within the configured window, it is temporarily blocked from matching. Active bans are persisted to `DATA_DIR/bans.json` (atomic write) and reloaded on startup, so they survive restarts and redeploys. Expired bans are pruned automatically. This is not a substitute for human moderation.
 
