@@ -6,6 +6,9 @@
   "scripts": {
     "start": "node index.js",
     "dev": "node --watch index.js",
+    "backup": "node scripts/backup-data.js",
+    "backup:staging": "node --env-file=.env.staging scripts/backup-data.js",
+    "start:staging": "node --env-file=.env.staging index.js",
     "test": "node --test",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",

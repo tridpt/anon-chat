@@ -5,6 +5,7 @@ const path = require('path');
 const crypto = require('crypto');
 const fs = require('fs/promises');
 const { readFileSync } = require('fs');
+const { backupData } = require('./scripts/backup-data');
 
 function loadLocalEnv() {
   const envFile = path.join(__dirname, '.env');
@@ -160,6 +161,7 @@ const DEFAULT_ADMIN_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const ADMIN_SESSION_COOKIE = 'ghostchat_admin_session';
 const ADMIN_SESSION_COOKIE_PATH = '/api/admin';
 const ADMIN_EVENT_HEARTBEAT_MS = 25_000;
+const HOUR_MS = 60 * 60 * 1000;
 const MIN_MODERATOR_PASSWORD_LENGTH = 12;
 const MAX_MODERATOR_PASSWORD_LENGTH = 128;
 const RESERVED_MODERATOR_USERNAMES = new Set(['env-admin', 'system']);
@@ -380,6 +382,11 @@ function parseAdminSessionTtlHours(value) {
   return Number.isFinite(hours) && hours > 0
     ? hours * 60 * 60 * 1000
     : DEFAULT_ADMIN_SESSION_TTL_MS;
+}
+
+function parseBackupIntervalHours(value) {
+  const hours = Number.parseFloat(value);
+  return Number.isFinite(hours) && hours > 0 ? hours * HOUR_MS : 0;
 }
 
 function parseCookies(header) {
@@ -633,6 +640,7 @@ function createReportStore(dataDirectory) {
         await persistAll();
         return copyValue(updated);
       }),
+    flush: () => operationQueue,
   };
 }
 
@@ -923,6 +931,7 @@ function createBanStore(dataDirectory) {
         await fs.writeFile(temporaryFile, `${JSON.stringify(entries, null, 2)}\n`, 'utf8');
         await fs.rename(temporaryFile, bansFile);
       }),
+    flush: () => operationQueue,
   };
 }
 
@@ -1138,6 +1147,9 @@ function createModeratorStore(dataDirectory) {
 function createChatServer({
   logger = console,
   dataDir = process.env.DATA_DIR || path.join(__dirname, 'data'),
+  backupDir = process.env.BACKUP_DIR || path.join(__dirname, 'backups'),
+  backupIntervalMs = parseBackupIntervalHours(process.env.BACKUP_INTERVAL_HOURS),
+  backupRetention = process.env.BACKUP_RETENTION,
   adminToken = process.env.ADMIN_TOKEN,
   adminPath = process.env.ADMIN_PATH || '/admin',
   adminSessionTtlMs = parseAdminSessionTtlHours(process.env.ADMIN_SESSION_TTL_HOURS),
@@ -3368,6 +3380,43 @@ function createChatServer({
   const matchingInterval = setInterval(matchUsers, 2000);
   matchingInterval.unref();
 
+  let backupInterval = null;
+  let backupQueue = Promise.resolve();
+  let backupInProgress = false;
+  if (Number.isFinite(backupIntervalMs) && backupIntervalMs > 0) {
+    const queueBackup = () => {
+      if (backupInProgress) return backupQueue;
+      backupInProgress = true;
+      backupQueue = backupQueue
+        .catch(() => {})
+        .then(async () => {
+          await Promise.all([
+            reportStore.flush(),
+            appealStore.flush(),
+            chatStore.flush(),
+            banStore.flush(),
+            moderatorStore.flush(),
+            auditStore.flush(),
+          ]);
+          const snapshot = await backupData({
+            dataDir,
+            backupDir,
+            keep: backupRetention,
+          });
+          log(`Created data backup with ${snapshot.files.length} JSON file(s).`);
+        })
+        .catch(logError)
+        .finally(() => {
+          backupInProgress = false;
+        });
+      return backupQueue;
+    };
+
+    queueBackup();
+    backupInterval = setInterval(queueBackup, backupIntervalMs);
+    backupInterval.unref?.();
+  }
+
   return {
     app,
     server,
@@ -3375,6 +3424,7 @@ function createChatServer({
     close: () =>
       new Promise((resolve, reject) => {
         clearInterval(matchingInterval);
+        if (backupInterval) clearInterval(backupInterval);
         clearInterval(adminSessionCleanup);
         clearInterval(adminEventHeartbeat);
         for (const stream of [...adminEventStreams]) closeAdminEventStream(stream);
@@ -3384,10 +3434,13 @@ function createChatServer({
         appealRateLimiter.stop();
         io.close(async (error) => {
           try {
+            await reportStore.flush();
             await chatStore.flush();
             await appealStore.flush();
+            await banStore.flush();
             await moderatorStore.flush();
             await auditStore.flush();
+            await backupQueue;
             if (redisClients) {
               await Promise.all([
                 redisClients.pubClient.quit(),

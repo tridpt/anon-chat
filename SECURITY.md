@@ -22,6 +22,9 @@ This project is an anonymous chat service. A few design points worth knowing:
 
 - The app stores masked chat transcripts for the configured retention period;
   treat the data directory as sensitive.
+- Backups contain the same reports, transcripts, moderator hashes, and audit data as
+  `DATA_DIR`; backup snapshots are not encrypted, so store `BACKUP_DIR` on a
+  restricted disk and replicate it only to trusted, access-controlled storage.
 - Ban appeal explanations are also stored in `DATA_DIR/appeals.json` and may contain
   sensitive information; protect and retain this file under the same policy as transcripts.
 - The `18+` confirmation is a self-attestation, not identity or age verification.

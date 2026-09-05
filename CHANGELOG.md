@@ -26,6 +26,8 @@ and the project follows [Semantic Versioning](https://semver.org/).
   and moderator approval or rejection actions that lift or preserve the ban.
 - Authenticated admin event streaming for new report/appeal notifications, tab badges, and
   automatic moderation-list refreshes.
+- A timestamped JSON backup utility (`npm run backup`) with SHA-256 manifests, configurable
+  retention, scheduled startup/interval backups, and a direct Node staging profile.
 
 ### Changed
 

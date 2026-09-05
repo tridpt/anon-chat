@@ -20,6 +20,7 @@ Anonymous, one-on-one chat with language-compatible matching. GhostChat does not
 - Keep resolved reports in a separate archive and apply moderator actions such as a 24-hour chat block or permanent ban.
 - Let banned visitors submit one explanation for moderator review; approvals lift the active ban and rejections keep it in place.
 - Store masked chat transcripts for admin review, with search, date filters, pagination, JSON/CSV export, deletion, and configurable automatic retention.
+- Create timestamped, checksum-verified JSON backups of moderation data with configurable retention.
 - Organize the moderation dashboard into separate Overview, Reports, Appeals, Resolved, Bans, Activity, and Chats tabs.
 - Stream new report and appeal notifications to signed-in moderators, with tab badges and automatic refreshes.
 - Protect browser admin access with short-lived, HttpOnly sessions, same-origin mutation checks, login throttling, and named moderator roles.
@@ -56,6 +57,9 @@ npm test
 | ------------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | `PORT`                    | `3000`                        | HTTP and Socket.IO port.                                                                                          |
 | `DATA_DIR`                | `./data`                      | Directory where durable reports, appeals, bans, chat transcripts, moderator accounts, and audit logs are stored.  |
+| `BACKUP_DIR`              | `./backups`                   | Directory where timestamped JSON data snapshots are written by `npm run backup`.                                  |
+| `BACKUP_RETENTION`        | `14`                          | Number of snapshots to retain automatically; `0` disables pruning.                                                |
+| `BACKUP_INTERVAL_HOURS`   | `0`                           | Automatic backup interval when the server is running; `0` disables scheduled backups.                             |
 | `CHAT_RETENTION_DAYS`     | `30`                          | Number of days to retain completed chat transcripts. Set to `0` or a negative value to retain indefinitely.       |
 | `ADMIN_TOKEN`             | _(recommended for bootstrap)_ | Secret used to bootstrap the first named admin account and for emergency API access.                              |
 | `ADMIN_SESSION_TTL_HOURS` | `8`                           | Lifetime of the in-memory admin session created after sign-in.                                                    |
@@ -78,6 +82,22 @@ When a local `.env` file exists, the app loads it automatically. Keep `.env` pri
 Open the configured `ADMIN_PATH` (for example `http://localhost:3000/admin`) and use the bootstrap token once. The server exchanges it for a short-lived, `HttpOnly`, `SameSite=Strict` session cookie; the browser console does not store the token or send it on every request. From the Team tab, create named accounts with one of three roles: `admin` (full access and team management), `moderator` (review reports, lift bans, and delete transcripts), or `viewer` (read-only access). Passwords are stored as `scrypt` hashes in `DATA_DIR/moderators.json`, never as plaintext. Sessions are held in memory and re-check the account on every request, so disabling an account or changing its role takes effect immediately. Keep at least one active admin account. In production, set a random `ADMIN_PATH` as an additional layer; this path is not a replacement for `ADMIN_TOKEN`.
 
 The admin API still accepts `Authorization: Bearer <ADMIN_TOKEN>` for existing scripts and automation. Prefer the browser session flow for interactive access, and never put the token in a URL.
+
+### Backups
+
+Create a local snapshot of every JSON file in `DATA_DIR` (reports, appeals, bans, transcripts, moderator
+accounts, and audit logs):
+
+```bash
+npm run backup
+```
+
+Each snapshot is written to a new timestamped directory under `BACKUP_DIR` with a `manifest.json` containing
+file sizes and SHA-256 checksums. The operation uses a temporary directory and a final rename, so an incomplete
+snapshot is never presented as complete. Keep backups outside `DATA_DIR`, protect them like the source data,
+and copy them to separate or off-site storage. Backups are not encrypted by the app. Set `BACKUP_RETENTION=0`
+to keep every snapshot, or use `--keep <number>` for a one-off retention override. Set
+`BACKUP_INTERVAL_HOURS=24` to create one snapshot at startup and repeat it every 24 hours while the server runs.
 
 ## Safety behaviour and limitations
 
@@ -115,6 +135,21 @@ docker compose up --build
 Open `http://localhost:3000` in one browser and `http://localhost:3001` in another, join with a shared interest, and confirm the two are matched across instances.
 
 > Note: the single-instance (in-memory) path is covered by the automated test suite. The distributed path relies on a live Redis and multiple instances, so smoke-test it with the Compose stack (or your staging environment) before relying on it in production.
+
+## Run a local staging instance
+
+Staging can run directly with Node and does not require Docker. Copy the example configuration, replace the token
+and secret admin path, then start it on port `3100` with separate staging data and backup directories:
+
+```powershell
+Copy-Item .env.staging.example .env.staging
+# Edit .env.staging before continuing.
+npm run start:staging
+```
+
+Open `http://localhost:3100`. The staging configuration creates a backup on startup and every 24 hours. To run
+one manually, use `npm run backup:staging`. The local example uses `NODE_ENV=staging` and HTTP; use
+`NODE_ENV=production` behind HTTPS for a real deployment.
 
 ## Deploy with Docker
 

@@ -390,6 +390,9 @@ Cờ trạng thái quan trọng: `hasActiveSession`, `isInChat`, `currentPartner
 | ------------------------- | ------------------------- | ------------------------------------------------------------------------------------ |
 | `PORT`                    | `3000`                    | Cổng HTTP và Socket.IO                                                               |
 | `DATA_DIR`                | `./data`                  | Thư mục lưu báo cáo, appeal, lệnh cấm, transcript, tài khoản moderator, và audit log |
+| `BACKUP_DIR`              | `./backups`               | Thư mục lưu snapshot JSON có timestamp khi chạy `npm run backup`                     |
+| `BACKUP_RETENTION`        | `14`                      | Số snapshot giữ lại tự động; `0` tắt dọn snapshot cũ                                 |
+| `BACKUP_INTERVAL_HOURS`   | `0`                       | Chu kỳ backup tự động khi server đang chạy; `0` tắt backup theo lịch                 |
 | `ADMIN_TOKEN`             | _(khuyến nghị bootstrap)_ | Token tạo admin đầu tiên và truy cập khẩn cấp server-to-server                       |
 | `ADMIN_SESSION_TTL_HOURS` | `8`                       | Thời gian sống phiên admin trong RAM (giờ)                                           |
 | `ADMIN_COOKIE_SECURE`     | `auto`                    | Ép cờ `Secure` cho cookie (`true`/`1`); tự bật trong HTTPS/production                |
@@ -404,6 +407,15 @@ npm start
 
 Mở `http://localhost:3000/admin`, nhập token bootstrap một lần để tạo tài khoản `admin` đầu tiên trong tab **Team**, sau đó dùng username/password cho các lần đăng nhập tiếp theo. Token được đổi thành cookie phiên; không dán token vào URL.
 
+### Sao lưu dữ liệu
+
+Chạy `npm run backup` để chụp toàn bộ file JSON trong `DATA_DIR`. Mỗi snapshot nằm trong thư mục timestamp dưới
+`BACKUP_DIR`, kèm `manifest.json` ghi kích thước và SHA-256 của từng file. Snapshot được tạo trong thư mục tạm rồi
+đổi tên hoàn tất; không đặt `BACKUP_DIR` bên trong `DATA_DIR`. Mặc định giữ 14 snapshot, có thể đổi bằng
+`BACKUP_RETENTION` hoặc tham số `--keep`; đặt `BACKUP_RETENTION=0` để không tự dọn. Dữ liệu backup chưa mã hóa,
+phải bảo vệ như `DATA_DIR` và sao chép thêm sang ổ đĩa độc lập. Đặt `BACKUP_INTERVAL_HOURS=24` để server tạo một
+snapshot lúc khởi động rồi lặp lại mỗi 24 giờ; đặt `0` để chỉ backup thủ công.
+
 ---
 
 ## 10. Chạy & phát triển
@@ -414,6 +426,8 @@ Yêu cầu Node.js >= 20.
 npm ci            # cài dependencies theo lockfile
 npm start         # chạy server tại http://localhost:3000
 npm run dev       # chạy với --watch, tự khởi động lại khi sửa file
+npm run start:staging  # chạy cấu hình staging từ .env.staging tại cổng 3100
+npm run backup:staging # tạo backup thủ công theo cấu hình .env.staging
 ```
 
 Mở `http://localhost:3000`. Để thử ghép cặp, mở hai tab/trình duyệt khác nhau (mỗi tab có `clientId` riêng nếu khác hồ sơ trình duyệt; cùng một trình duyệt sẽ dùng chung `clientId` nên không tự ghép với chính mình).
@@ -437,6 +451,7 @@ Bộ kiểm thử (`test/chat-server.test.js`) dùng `node:test` + `socket.io-cl
 7. Không ghép lại với người đã chặn.
 8. Nhận báo cáo và ghi log kiểm duyệt có cấu trúc.
 9. Lưu báo cáo và yêu cầu admin token để xem.
+10. Tạo snapshot backup JSON và dọn snapshot cũ theo retention.
 
 Tiện ích test: `waitForEvent`, `createTestServer`, `connectClient`, `login`.
 
@@ -460,6 +475,21 @@ docker run --rm -p 3000:3000 \
 Mount volume tại `/app/data` để báo cáo và lệnh cấm tồn tại qua các lần redeploy. Nên đặt sau HTTPS (kết thúc TLS ở proxy/host).
 
 > Vì cài `--omit=dev` và Redis nằm trong `optionalDependencies`, image vẫn chứa các gói Redis. Nếu muốn dùng nhiều instance với Redis, truyền thêm `-e REDIS_URL=...`.
+
+### Chạy staging trực tiếp bằng Node
+
+Staging không cần Docker. Sao chép `.env.staging.example` thành `.env.staging`, thay token và đường dẫn admin bí
+mật, rồi chạy:
+
+```powershell
+Copy-Item .env.staging.example .env.staging
+# Chỉnh .env.staging trước khi chạy.
+npm run start:staging
+```
+
+Staging chạy tại `http://localhost:3100`, dùng thư mục `data-staging` và `backups-staging` riêng, đồng thời tự
+backup lúc khởi động và mỗi 24 giờ. Dùng `npm run backup:staging` để chụp thủ công. Ví dụ local dùng
+`NODE_ENV=staging` với HTTP; khi triển khai sau HTTPS hãy đổi thành `NODE_ENV=production`.
 
 ---
 
