@@ -22,6 +22,72 @@ function waitForEvent(socket, event, timeoutMs = 1_500) {
   });
 }
 
+const sseStates = new WeakMap();
+
+function waitForSseEvent(response, expectedEvent, timeoutMs = 1_500, predicate = () => true) {
+  const state = sseStates.get(response) || { buffer: '', decoder: new TextDecoder() };
+  sseStates.set(response, state);
+  const reader = response.body.getReader();
+  let settled = false;
+  let timer;
+
+  return new Promise((resolve, reject) => {
+    function finish(error, value) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reader.cancel().catch(() => {});
+      else reader.releaseLock();
+      if (error) reject(error);
+      else resolve(value);
+    }
+
+    timer = setTimeout(
+      () => finish(new Error(`Timed out waiting for SSE event ${expectedEvent}`)),
+      timeoutMs,
+    );
+
+    async function readNext() {
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          finish(new Error(`SSE stream ended before ${expectedEvent}`));
+          return;
+        }
+
+        state.buffer += state.decoder.decode(value, { stream: true });
+        const blocks = state.buffer.split(/\r?\n\r?\n/);
+        state.buffer = blocks.pop() || '';
+        for (const block of blocks) {
+          let event = 'message';
+          let data = '';
+          for (const line of block.split(/\r?\n/)) {
+            if (line.startsWith('event:')) event = line.slice(6).trim();
+            if (line.startsWith('data:')) data += line.slice(5).trim();
+          }
+          if (event !== expectedEvent) continue;
+          let payload;
+          try {
+            payload = JSON.parse(data);
+          } catch (error) {
+            finish(error);
+            return;
+          }
+          if (predicate(payload)) {
+            finish(null, payload);
+            return;
+          }
+        }
+        readNext();
+      } catch (error) {
+        finish(error);
+      }
+    }
+
+    readNext();
+  });
+}
+
 async function createTestServer(
   t,
   { logger = { info() {}, error() {} }, adminToken, adminPath = '/admin', adminSessionTtlMs } = {},
@@ -296,6 +362,8 @@ test('persists reports and protects admin review', async (t) => {
   assert.match(adminMarkup, /data-tab-panel="chats"/);
   assert.match(adminMarkup, /Sign in to moderation tools/);
   assert.match(adminMarkup, /HttpOnly/);
+  assert.match(adminMarkup, /id="reports-badge"/);
+  assert.match(adminMarkup, /id="appeals-badge"/);
 
   const alice = await connectClient(t, url);
   const bob = await connectClient(t, url);
@@ -444,6 +512,84 @@ test('persists reports and protects admin review', async (t) => {
   const queued = waitForEvent(bobUnbanned, 'queued');
   login(bobUnbanned, { username: 'Bob', interests: 'books', clientId: 'client-bob-123456' });
   await queued;
+});
+
+test('streams moderation updates to authenticated admin sessions', async (t) => {
+  const adminToken = 'test-admin-token-123';
+  const url = await createTestServer(t, { adminToken });
+  const loginResult = await signInModerator(url, { token: adminToken });
+  assert.equal(loginResult.response.status, 200);
+  assert.ok(loginResult.cookie);
+
+  const unauthenticated = await fetch(`${url}/api/admin/events`);
+  assert.equal(unauthenticated.status, 401);
+  const bearerOnly = await fetch(`${url}/api/admin/events`, {
+    headers: { Authorization: `Bearer ${adminToken}` },
+  });
+  assert.equal(bearerOnly.status, 401);
+
+  const controller = new AbortController();
+  t.after(() => controller.abort());
+  const stream = await fetch(`${url}/api/admin/events`, {
+    headers: { Cookie: loginResult.cookie },
+    signal: controller.signal,
+  });
+  assert.equal(stream.status, 200);
+  assert.match(stream.headers.get('content-type') || '', /text\/event-stream/);
+  const ready = await waitForSseEvent(stream, 'moderation_ready');
+  assert.equal(ready.role, 'admin');
+
+  const alice = await connectClient(t, url);
+  const bob = await connectClient(t, url);
+  const aliceMatched = waitForEvent(alice, 'matched');
+  const bobMatched = waitForEvent(bob, 'matched');
+  login(alice, { username: 'Alice', interests: 'books', clientId: 'client-alice-12345' });
+  login(bob, { username: 'Bob', interests: 'books', clientId: 'client-bob-123456' });
+  await Promise.all([aliceMatched, bobMatched]);
+
+  const reportUpdate = waitForSseEvent(stream, 'moderation_update');
+  const reportReceived = waitForEvent(alice, 'report_received');
+  alice.emit('reportPartner', { reason: 'Spam or scam' });
+  await reportReceived;
+  const reportEvent = await reportUpdate;
+  assert.equal(reportEvent.kind, 'reports');
+  assert.equal(reportEvent.action, 'created');
+  assert.match(reportEvent.occurredAt, /^\d{4}-\d{2}-\d{2}T/);
+
+  const headers = { Authorization: `Bearer ${adminToken}` };
+  const reports = (await (await fetch(`${url}/api/admin/reports`, { headers })).json()).reports;
+  const bobBanned = waitForEvent(bob, 'app_error');
+  const banResponse = await fetch(`${url}/api/admin/reports/${reports[0].id}`, {
+    method: 'PATCH',
+    headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      status: 'resolved',
+      moderationAction: 'permanent_ban',
+      moderationNote: 'Review required.',
+    }),
+  });
+  assert.equal(banResponse.status, 200);
+  assert.equal((await bobBanned).code, 'banned');
+
+  const appealUpdate = waitForSseEvent(
+    stream,
+    'moderation_update',
+    1_500,
+    (payload) => payload?.kind === 'appeals',
+  );
+  const submitted = await fetch(`${url}/api/appeals`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      clientId: 'client-bob-123456',
+      message: 'Please review this decision.',
+    }),
+  });
+  assert.equal(submitted.status, 201);
+  const appealEvent = await appealUpdate;
+  assert.equal(appealEvent.kind, 'appeals');
+  assert.equal(appealEvent.action, 'created');
+  assert.match(appealEvent.occurredAt, /^\d{4}-\d{2}-\d{2}T/);
 });
 
 test('accepts ban appeals, links the case, and lifts the ban when approved', async (t) => {

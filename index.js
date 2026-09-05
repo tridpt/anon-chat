@@ -159,6 +159,7 @@ const CHAT_BLOCK_DURATION_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_ADMIN_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const ADMIN_SESSION_COOKIE = 'ghostchat_admin_session';
 const ADMIN_SESSION_COOKIE_PATH = '/api/admin';
+const ADMIN_EVENT_HEARTBEAT_MS = 25_000;
 const MIN_MODERATOR_PASSWORD_LENGTH = 12;
 const MAX_MODERATOR_PASSWORD_LENGTH = 128;
 const RESERVED_MODERATOR_USERNAMES = new Set(['env-admin', 'system']);
@@ -1178,6 +1179,11 @@ function createChatServer({
     Math.min(Math.max(sessionTtlMs, 1_000), 15 * 60_000),
   );
   adminSessionCleanup.unref?.();
+  const adminEventStreams = new Set();
+  const adminEventHeartbeat = setInterval(() => {
+    keepAdminEventStreamsAlive().catch(logError);
+  }, ADMIN_EVENT_HEARTBEAT_MS);
+  adminEventHeartbeat.unref?.();
   let redisClients = null;
 
   // When trustProxy is enabled, honour the left-most X-Forwarded-For entry set by a trusted
@@ -1299,6 +1305,7 @@ function createChatServer({
         reason: 'Automatic suspension after repeated reports.',
         note: '',
       });
+      broadcastModerationUpdate('bans', 'created');
       return true;
     }
     return false;
@@ -1604,13 +1611,97 @@ function createChatServer({
 
   async function getAdminPrincipal(request) {
     const session = await getValidAdminSession(request);
-    if (session) return session.principal;
+    if (session) {
+      request.adminSession = session;
+      return session.principal;
+    }
 
     // Keep bearer tokens available for scripts that already use the admin API. The browser
     // console authenticates with the short-lived HttpOnly session cookie instead.
     const authorization = request.get('authorization') || '';
     const suppliedToken = authorization.startsWith('Bearer ') ? authorization.slice(7) : '';
     return tokenMatches(suppliedToken) ? getBootstrapPrincipal() : null;
+  }
+
+  function removeAdminEventStream(stream) {
+    if (!adminEventStreams.delete(stream)) return;
+    stream.closed = true;
+  }
+
+  function closeAdminEventStream(stream) {
+    removeAdminEventStream(stream);
+    if (!stream.response.writableEnded && !stream.response.destroyed) stream.response.end();
+  }
+
+  function writeAdminEvent(stream, event, payload) {
+    if (stream.closed || stream.response.writableEnded || stream.response.destroyed) {
+      closeAdminEventStream(stream);
+      return false;
+    }
+
+    try {
+      stream.response.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
+      return true;
+    } catch (error) {
+      logError(error);
+      closeAdminEventStream(stream);
+      return false;
+    }
+  }
+
+  function writeAdminComment(stream, value) {
+    if (stream.closed || stream.response.writableEnded || stream.response.destroyed) {
+      closeAdminEventStream(stream);
+      return false;
+    }
+
+    try {
+      stream.response.write(`: ${value}\n\n`);
+      return true;
+    } catch (error) {
+      logError(error);
+      closeAdminEventStream(stream);
+      return false;
+    }
+  }
+
+  async function isAdminEventStreamValid(stream) {
+    const session = adminSessions.get(stream.sessionId);
+    if (!session || session.expiresAt <= Date.now()) return false;
+    if (session.principalType === 'bootstrap') return Boolean(adminToken);
+    if (!session.moderatorId) return false;
+    return Boolean(await moderatorStore.getActive(session.moderatorId));
+  }
+
+  async function keepAdminEventStreamsAlive() {
+    for (const stream of [...adminEventStreams]) {
+      try {
+        if (!(await isAdminEventStreamValid(stream))) {
+          writeAdminEvent(stream, 'moderation_session_expired', {});
+          closeAdminEventStream(stream);
+          continue;
+        }
+        writeAdminComment(stream, `keep-alive ${Date.now()}`);
+      } catch (error) {
+        logError(error);
+      }
+    }
+  }
+
+  function deliverAdminModerationUpdate(payload) {
+    for (const stream of [...adminEventStreams]) {
+      writeAdminEvent(stream, 'moderation_update', payload);
+    }
+  }
+
+  function broadcastModerationUpdate(kind, action = 'updated') {
+    const payload = {
+      kind,
+      action,
+      occurredAt: new Date().toISOString(),
+    };
+    deliverAdminModerationUpdate(payload);
+    if (distributedEnabled()) io.serverSideEmit('anon:moderation_update', payload);
   }
 
   async function requireAdmin(request, response, next) {
@@ -1699,6 +1790,41 @@ function createChatServer({
     });
   });
 
+  app.get('/api/admin/events', requireAdmin, (request, response) => {
+    if (!isSameOriginRequest(request)) {
+      response.status(403).json({ error: 'Admin events must come from the same origin.' });
+      return;
+    }
+
+    // EventSource cannot attach a bearer header, so require the HttpOnly session cookie here.
+    const session = request.adminSession;
+    if (!session) {
+      response.status(401).json({ error: 'A signed-in moderator session is required.' });
+      return;
+    }
+
+    response.set({
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    response.flushHeaders?.();
+
+    const stream = {
+      response,
+      sessionId: session.id,
+      closed: false,
+    };
+    adminEventStreams.add(stream);
+    const cleanup = () => removeAdminEventStream(stream);
+    response.on('close', cleanup);
+    writeAdminEvent(stream, 'moderation_ready', {
+      connectedAt: new Date().toISOString(),
+      role: request.admin.role,
+    });
+  });
+
   app.post('/api/appeals', async (request, response) => {
     response.set('Cache-Control', 'no-store');
     if (!isSameOriginRequest(request)) {
@@ -1768,6 +1894,7 @@ function createChatServer({
         reportId: appeal.reportId,
         note: 'Anonymous user submitted a ban appeal.',
       });
+      broadcastModerationUpdate('appeals', 'created');
       response.status(201).json({ appeal: toPublicAppeal(appeal) });
     } catch (error) {
       logError(error);
@@ -2190,6 +2317,8 @@ function createChatServer({
         },
         request.admin,
       );
+      broadcastModerationUpdate('appeals', 'updated');
+      if (status === 'approved') broadcastModerationUpdate('bans', 'updated');
 
       const [enriched] = await enrichAppeals([reviewedAppeal]);
       response.json({ appeal: enriched });
@@ -2258,6 +2387,7 @@ function createChatServer({
           },
           request.admin,
         );
+        broadcastModerationUpdate('bans', 'updated');
         response.json({ clientId: request.params.clientId });
       } catch (error) {
         logError(error);
@@ -2318,6 +2448,8 @@ function createChatServer({
         },
         request.admin,
       );
+      broadcastModerationUpdate('reports', 'updated');
+      if (moderationAction !== 'none') broadcastModerationUpdate('bans', 'created');
 
       response.json({ report });
     } catch (error) {
@@ -2405,6 +2537,7 @@ function createChatServer({
         },
         request.admin,
       );
+      broadcastModerationUpdate('chats', 'updated');
       response.json({ chat });
     } catch (error) {
       logError(error);
@@ -2956,6 +3089,10 @@ function createChatServer({
   io.on('anon:mm:chat_message', ({ roomId, message }) => {
     chatStore.appendMessage(roomId, message).catch(logError);
   });
+  io.on('anon:moderation_update', (payload) => {
+    if (!isPlainObject(payload) || typeof payload.kind !== 'string') return;
+    deliverAdminModerationUpdate(payload);
+  });
 
   io.on('connection', (socket) => {
     socket.color = COLORS[Math.floor(Math.random() * COLORS.length)];
@@ -3175,6 +3312,7 @@ function createChatServer({
           reviewedAt: null,
         });
         logReport(report);
+        broadcastModerationUpdate('reports', 'created');
         socket.emit('report_received');
 
         if (
@@ -3238,6 +3376,8 @@ function createChatServer({
       new Promise((resolve, reject) => {
         clearInterval(matchingInterval);
         clearInterval(adminSessionCleanup);
+        clearInterval(adminEventHeartbeat);
+        for (const stream of [...adminEventStreams]) closeAdminEventStream(stream);
         httpRateLimiter.stop();
         connectionRateLimiter.stop();
         adminLoginRateLimiter.stop();

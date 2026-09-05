@@ -24,6 +24,8 @@ and the project follows [Semantic Versioning](https://semver.org/).
   immediate account revocation, team management, and actor-aware moderation audit events.
 - Ban appeals with a public submission form, durable appeal storage, report/transcript links,
   and moderator approval or rejection actions that lift or preserve the ban.
+- Authenticated admin event streaming for new report/appeal notifications, tab badges, and
+  automatic moderation-list refreshes.
 
 ### Changed
 

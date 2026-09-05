@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="robots" content="noindex, nofollow" />
     <title>GhostChat Moderation</title>
-    <link rel="stylesheet" href="admin.css?v=6" />
+    <link rel="stylesheet" href="admin.css?v=8" />
   </head>
   <body>
     <main class="admin-shell">
@@ -69,6 +69,7 @@
         <p id="admin-status" class="admin-status" role="status" aria-live="polite">
           Sign in to load moderation data.
         </p>
+        <span id="realtime-status" class="realtime-status" hidden>Live updates off</span>
       </div>
 
       <div id="admin-workspace" hidden>
@@ -95,6 +96,7 @@
             tabindex="-1"
           >
             Reports
+            <span id="reports-badge" class="tab-badge" hidden aria-hidden="true">0</span>
           </button>
           <button
             id="tab-appeals"
@@ -107,6 +109,7 @@
             tabindex="-1"
           >
             Appeals
+            <span id="appeals-badge" class="tab-badge" hidden aria-hidden="true">0</span>
           </button>
           <button
             id="tab-resolved"
@@ -432,6 +435,6 @@
       </div>
     </main>
 
-    <script src="admin.js?v=11"></script>
+    <script src="admin.js?v=13"></script>
   </body>
 </html>

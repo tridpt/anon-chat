@@ -37,6 +37,9 @@ const chatPageStatus = document.getElementById('chat-page-status');
 const tabButtons = Array.from(document.querySelectorAll('.admin-tab'));
 const tabPanels = Array.from(document.querySelectorAll('[data-tab-panel]'));
 const adminStatus = document.getElementById('admin-status');
+const realtimeStatus = document.getElementById('realtime-status');
+const reportsBadge = document.getElementById('reports-badge');
+const appealsBadge = document.getElementById('appeals-badge');
 const openReportsStat = document.getElementById('stat-open-reports');
 const linkedReportsStat = document.getElementById('stat-linked-reports');
 const resolvedReportsStat = document.getElementById('stat-resolved-reports');
@@ -58,6 +61,146 @@ let activeTab = 'overview';
 let chatPage = 1;
 let isAuthenticated = false;
 let principal = null;
+let adminEventSource = null;
+let realtimeRefreshTimer = null;
+let realtimeRefreshKinds = new Set();
+const notificationCounts = { reports: 0, appeals: 0 };
+
+const notificationBadges = { reports: reportsBadge, appeals: appealsBadge };
+
+function hasNotificationKind(kind) {
+  return Object.prototype.hasOwnProperty.call(notificationCounts, kind);
+}
+
+function updateNotificationBadge(kind) {
+  const badge = notificationBadges[kind];
+  if (!badge) return;
+  const count = notificationCounts[kind];
+  badge.innerText = count > 99 ? '99+' : String(count);
+  badge.hidden = count === 0;
+}
+
+function setNotificationCount(kind, count) {
+  if (!hasNotificationKind(kind)) return;
+  notificationCounts[kind] = Math.max(0, Number.parseInt(count, 10) || 0);
+  updateNotificationBadge(kind);
+}
+
+function clearNotificationBadge(kind) {
+  if (!hasNotificationKind(kind)) return;
+  setNotificationCount(kind, 0);
+}
+
+function clearNotificationBadges() {
+  Object.keys(notificationCounts).forEach(clearNotificationBadge);
+}
+
+function setRealtimeStatus(state) {
+  if (!realtimeStatus) return;
+  realtimeStatus.dataset.state = state;
+  realtimeStatus.hidden = !isAuthenticated;
+  realtimeStatus.innerText =
+    state === 'live'
+      ? 'Live updates on'
+      : state === 'reconnecting'
+        ? 'Reconnecting…'
+        : 'Connecting live updates…';
+}
+
+function markTabSeen(tabName) {
+  if (tabName === 'reports') clearNotificationBadge('reports');
+  if (tabName === 'appeals') clearNotificationBadge('appeals');
+}
+
+function scheduleRealtimeRefresh(kind) {
+  realtimeRefreshKinds.add(kind);
+  if (realtimeRefreshTimer) return;
+
+  realtimeRefreshTimer = window.setTimeout(() => {
+    realtimeRefreshTimer = null;
+    const kinds = [...realtimeRefreshKinds];
+    realtimeRefreshKinds = new Set();
+    if (!isAuthenticated) return;
+
+    if (kinds.includes('connected')) {
+      loadActiveTab();
+      return;
+    }
+
+    if (activeTab === 'overview') {
+      loadOverview();
+      return;
+    }
+    if (kinds.includes('reports') && (activeTab === 'reports' || activeTab === 'resolved')) {
+      loadReports();
+      return;
+    }
+    if (kinds.includes('appeals') && activeTab === 'appeals') {
+      loadAppeals();
+      return;
+    }
+    if (kinds.includes('bans') && activeTab === 'bans') {
+      loadBans();
+      return;
+    }
+    if (kinds.includes('audit') && activeTab === 'audit') {
+      loadAuditLog();
+      return;
+    }
+    if (kinds.includes('chats') && activeTab === 'chats') loadChats();
+  }, 220);
+}
+
+function handleModerationUpdate(event) {
+  let payload;
+  try {
+    payload = JSON.parse(event.data);
+  } catch {
+    return;
+  }
+  const { kind } = payload || {};
+  if (!kind) return;
+  if (hasNotificationKind(kind) && payload.action === 'created') {
+    notificationCounts[kind] += 1;
+    updateNotificationBadge(kind);
+  }
+  scheduleRealtimeRefresh(kind);
+}
+
+function connectAdminEvents() {
+  if (!isAuthenticated || adminEventSource || typeof window.EventSource !== 'function') return;
+
+  setRealtimeStatus('connecting');
+  adminEventSource = new window.EventSource('/api/admin/events', { withCredentials: true });
+  adminEventSource.addEventListener('moderation_ready', () => {
+    setRealtimeStatus('live');
+    scheduleRealtimeRefresh('connected');
+  });
+  adminEventSource.addEventListener('moderation_update', handleModerationUpdate);
+  adminEventSource.addEventListener('moderation_session_expired', () => {
+    if (!isAuthenticated) return;
+    adminEventSource?.close();
+    adminEventSource = null;
+    setAuthenticated(false);
+    setStatus('Your admin session expired. Sign in again.', true);
+  });
+  adminEventSource.onerror = () => {
+    if (isAuthenticated) setRealtimeStatus('reconnecting');
+  };
+}
+
+function disconnectAdminEvents() {
+  if (adminEventSource) {
+    adminEventSource.close();
+    adminEventSource = null;
+  }
+  if (realtimeRefreshTimer) {
+    window.clearTimeout(realtimeRefreshTimer);
+    realtimeRefreshTimer = null;
+  }
+  realtimeRefreshKinds = new Set();
+  if (realtimeStatus) realtimeStatus.hidden = true;
+}
 
 function canModerate() {
   return principal?.role === 'admin' || principal?.role === 'moderator';
@@ -125,8 +268,15 @@ function updateRoleUi() {
 }
 
 function setAuthenticated(authenticated, expiresAt = null, nextPrincipal = null) {
+  const wasAuthenticated = isAuthenticated;
   isAuthenticated = authenticated;
   principal = authenticated ? nextPrincipal : null;
+  if (!authenticated) {
+    disconnectAdminEvents();
+    clearNotificationBadges();
+  } else if (!wasAuthenticated) {
+    connectAdminEvents();
+  }
   adminWorkspace.hidden = !authenticated;
   tokenForm.classList.toggle('authenticated', authenticated);
   credentialGrid.hidden = authenticated;
@@ -161,6 +311,7 @@ function setActiveTab(tabName, { load = true } = {}) {
   if (!TAB_ORDER.includes(tabName)) tabName = 'overview';
   const targetButton = tabButtons.find((button) => button.dataset.tab === tabName);
   if (targetButton?.hidden) tabName = 'overview';
+  markTabSeen(tabName);
   activeTab = tabName;
   tabButtons.forEach((button) => {
     const selected = button.dataset.tab === tabName;
@@ -877,6 +1028,7 @@ async function loadReports() {
       { archived: true },
     );
     updateReportStats(activeReports, archiveResult.reports);
+    if (activeTab === 'reports') clearNotificationBadge('reports');
     setStatus(
       `${reports.length} active report${reports.length === 1 ? '' : 's'} · ${archiveResult.reports.length} archived`,
     );
@@ -901,6 +1053,7 @@ async function loadAppeals() {
     if (appealStatusFilter.value === 'pending') {
       pendingAppealsStat.innerText = String(appeals.length);
     }
+    if (activeTab === 'appeals') clearNotificationBadge('appeals');
     setStatus(`${appeals.length} appeal${appeals.length === 1 ? '' : 's'} found.`);
   } catch (error) {
     appealsContainer.innerHTML = '';
@@ -925,6 +1078,11 @@ async function loadOverview() {
     activeBansStat.innerText = String(bansResult.bans.length);
     storedChatsStat.innerText = String(chatsResult.total);
     pendingAppealsStat.innerText = String(appealsResult.appeals.length);
+    setNotificationCount(
+      'reports',
+      reportsResult.reports.filter((report) => report.status === 'new').length,
+    );
+    setNotificationCount('appeals', appealsResult.appeals.length);
     setStatus('Overview refreshed.');
   } catch (error) {
     setStatus(error.message, true);

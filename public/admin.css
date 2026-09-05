@@ -378,6 +378,7 @@ h2 {
 .admin-status-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 9px;
   min-height: 43px;
   margin-top: 14px;
@@ -439,6 +440,24 @@ h2 {
   font-size: 13px;
 }
 
+.realtime-status {
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.realtime-status[data-state='live'] {
+  color: var(--mint);
+}
+
+.realtime-status[data-state='reconnecting'] {
+  color: var(--accent);
+}
+
 .admin-tabs {
   display: flex;
   align-items: center;
@@ -464,6 +483,26 @@ h2 {
   font-size: 13px;
   font-weight: 750;
   white-space: nowrap;
+}
+
+.tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  margin-left: 5px;
+  padding: 0 5px;
+  border-radius: 999px;
+  color: #fff7ed;
+  background: var(--danger);
+  font-size: 10px;
+  line-height: 1;
+}
+
+.admin-tab[aria-selected='true'] .tab-badge {
+  color: #142126;
+  background: #fff7ed;
 }
 
 .admin-tab:hover {
@@ -1055,6 +1094,10 @@ h2 {
 
   .header-actions {
     gap: 10px;
+  }
+
+  .realtime-status {
+    margin-left: 16px;
   }
 
   .stats-grid {

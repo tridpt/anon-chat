@@ -21,6 +21,7 @@ Anonymous, one-on-one chat with language-compatible matching. GhostChat does not
 - Let banned visitors submit one explanation for moderator review; approvals lift the active ban and rejections keep it in place.
 - Store masked chat transcripts for admin review, with search, date filters, pagination, JSON/CSV export, deletion, and configurable automatic retention.
 - Organize the moderation dashboard into separate Overview, Reports, Appeals, Resolved, Bans, Activity, and Chats tabs.
+- Stream new report and appeal notifications to signed-in moderators, with tab badges and automatic refreshes.
 - Protect browser admin access with short-lived, HttpOnly sessions, same-origin mutation checks, login throttling, and named moderator roles.
 - Mask basic profanity, limit links per message, and auto-suspend clients that pass a report threshold.
 - Show a live count of people currently online alongside the queue status.
@@ -54,7 +55,7 @@ npm test
 | Variable                  | Default                       | Purpose                                                                                                           |
 | ------------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | `PORT`                    | `3000`                        | HTTP and Socket.IO port.                                                                                          |
-| `DATA_DIR`                | `./data`                      | Directory where durable reports, bans, chat transcripts, moderator accounts, and audit logs are stored.           |
+| `DATA_DIR`                | `./data`                      | Directory where durable reports, appeals, bans, chat transcripts, moderator accounts, and audit logs are stored.  |
 | `CHAT_RETENTION_DAYS`     | `30`                          | Number of days to retain completed chat transcripts. Set to `0` or a negative value to retain indefinitely.       |
 | `ADMIN_TOKEN`             | _(recommended for bootstrap)_ | Secret used to bootstrap the first named admin account and for emergency API access.                              |
 | `ADMIN_SESSION_TTL_HOURS` | `8`                           | Lifetime of the in-memory admin session created after sign-in.                                                    |
@@ -102,7 +103,8 @@ Bans and per-socket rate limits remain per-instance (a reported client is auto-s
 
 Browser admin sessions are also held in process memory. With multiple app instances, route the
 admin console to a single instance (or add a shared session store) so a session remains available
-after load balancing.
+after load balancing. The live moderation event stream uses that same session, so it should follow
+the same routing rule.
 
 You can verify the shared queue locally with the bundled Compose stack (two app instances plus Redis):
 

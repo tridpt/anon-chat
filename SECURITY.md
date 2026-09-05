@@ -39,6 +39,9 @@ This project is an anonymous chat service. A few design points worth knowing:
   also invalidates its existing sessions. Keep at least one active admin account.
 - Existing automation may still use `Authorization: Bearer <ADMIN_TOKEN>`; keep
   those requests server-to-server and never expose the header in browser code.
+- Live moderation notifications are delivered through `/api/admin/events` only after the
+  `HttpOnly` admin session is validated; the stream carries event metadata, while report and
+  transcript details are fetched through the protected APIs.
 - Public appeal submission is limited to an actively banned anonymous client, guarded by
   same-origin checks and a per-IP daily limit. The anonymous `clientId` is not a durable identity,
   so a visitor who clears browser storage can obtain a new ID; appeals do not replace account-level

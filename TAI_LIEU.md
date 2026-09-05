@@ -40,6 +40,7 @@ Mỗi khách truy cập được gán một `clientId` ngẫu nhiên lưu trong 
 - **Node.js** (>= 20) — môi trường chạy.
 - **Express 5** — phục vụ HTTP, file tĩnh và API admin.
 - **Socket.IO 4** — giao tiếp thời gian thực hai chiều (WebSocket).
+- **Server-Sent Events (SSE)** — đẩy thông báo kiểm duyệt mới tới phiên admin đang đăng nhập.
 - **socket.io-client** — chỉ dùng cho bộ kiểm thử.
 - **node:test** — bộ kiểm thử tích hợp sẵn của Node, không cần thư viện ngoài.
 - **redis** + **@socket.io/redis-adapter** — _tùy chọn_ (optionalDependencies), chỉ nạp khi bật `REDIS_URL`.
@@ -226,6 +227,7 @@ Tham số: `{ logger, dataDir, adminToken, adminPath, adminSessionTtlMs, redisUr
 | PATCH    | `/api/admin/moderators/:id` | Admin đổi role, mật khẩu, hoặc bật/tắt tài khoản                                                                  |
 | GET      | `/api/admin/reports`        | Yêu cầu admin. Liệt kê báo cáo, lọc theo `?status=`                                                               |
 | PATCH    | `/api/admin/reports/:id`    | Yêu cầu admin. Cập nhật `status` + `moderationNote`                                                               |
+| GET      | `/api/admin/events`         | Yêu cầu session admin. Luồng SSE báo report/appeal/ban mới để dashboard tự cập nhật                               |
 | POST     | `/api/appeals`              | Công khai có giới hạn. Người đang bị ban gửi một lời giải thích khiếu nại                                         |
 | GET      | `/api/admin/appeals`        | Yêu cầu admin. Liệt kê appeal, lọc theo `?status=pending`, `approved`, hoặc `rejected`                            |
 | PATCH    | `/api/admin/appeals/:id`    | Yêu cầu role moderator. Duyệt (gỡ ban) hoặc từ chối appeal                                                        |
@@ -241,6 +243,8 @@ Tham số: `{ logger, dataDir, adminToken, adminPath, adminSessionTtlMs, redisUr
 - `express.json({ limit: '5kb' })` giới hạn body API.
 - `POST /api/appeals` chỉ nhận `clientId` đang có ban hiệu lực, giới hạn 2 lần mỗi IP trong 24 giờ,
   và yêu cầu same-origin khi trình duyệt gửi request. Duyệt appeal gọi `liftBan()` và ghi audit event.
+- `GET /api/admin/events` chỉ nhận cookie session `HttpOnly` hợp lệ (EventSource không gửi bearer
+  header), giữ kết nối SSE và tự đóng khi session hết hạn, bị thu hồi, hoặc tài khoản bị vô hiệu hóa.
 
 ### 6.7. Thuật toán ghép cặp
 
@@ -374,6 +378,8 @@ Cờ trạng thái quan trọng: `hasActiveSession`, `isInChat`, `currentPartner
 - Liệt kê báo cáo, lọc theo trạng thái, mỗi báo cáo là một thẻ cho phép đổi `status` và ghi `moderationNote`, lưu qua `PATCH /api/admin/reports/:id`.
 - Tab **Appeals** hiển thị hàng đợi khiếu nại, lý do và snapshot lệnh cấm, mở transcript/report liên quan,
   và cho moderator/admin nút **Approve & lift ban** hoặc **Reject appeal**.
+- Khi có report hoặc appeal mới, dashboard nhận SSE, tăng badge trên tab tương ứng và tự tải lại danh sách
+  đang mở; trạng thái kết nối live/reconnecting được hiển thị cạnh thông báo.
 - Trang đặt `noindex, nofollow`.
 
 ---
