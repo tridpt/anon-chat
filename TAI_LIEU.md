@@ -18,19 +18,20 @@ Mỗi khách truy cập được gán một `clientId` ngẫu nhiên lưu trong 
 
 ## 2. Tính năng
 
-| Nhóm       | Tính năng                                                                                         |
-| ---------- | ------------------------------------------------------------------------------------------------- |
-| Ghép cặp   | Ghép theo sở thích chung, ưu tiên ngôn ngữ tương thích (Việt/Anh/bất kỳ), fallback sau 5 giây chờ |
-| Trò chuyện | Nhắn tin thời gian thực, chỉ báo "đang gõ", âm thanh thông báo                                    |
-| Gợi ý      | Câu mở lời (icebreaker) theo sở thích chung và ngôn ngữ                                           |
-| Hàng đợi   | Hiển thị số người đang chờ, ước tính thời gian chờ, số người trực tuyến                           |
-| Cảm xúc    | Emoji picker khi soạn tin; thả reaction emoji lên từng tin nhắn                                   |
-| Giao diện  | Chuyển dark/light theme; đổi ngôn ngữ giao diện Việt/Anh (i18n)                                   |
-| Thông báo  | Thông báo trình duyệt khi được ghép cặp hoặc có tin mới lúc tab ẩn                                |
-| An toàn    | Bỏ qua (skip), chặn (block), bỏ chặn, báo cáo với lý do                                           |
-| Kiểm duyệt | Lọc từ ngữ xấu, giới hạn link, tự động cấm theo số report; trang `/admin`                         |
-| Vận hành   | Endpoint `/health` với số liệu; ban lưu bền vững qua restart                                      |
-| Mở rộng    | Redis adapter tùy chọn cho nhiều instance                                                         |
+| Nhóm       | Tính năng                                                                                           |
+| ---------- | --------------------------------------------------------------------------------------------------- |
+| Ghép cặp   | Ghép theo sở thích chung, ưu tiên ngôn ngữ tương thích (Việt/Anh/bất kỳ), fallback sau 5 giây chờ   |
+| Trò chuyện | Nhắn tin thời gian thực, chỉ báo "đang gõ", âm thanh thông báo                                      |
+| Gợi ý      | Câu mở lời (icebreaker) theo sở thích chung và ngôn ngữ                                             |
+| Hàng đợi   | Hiển thị số người đang chờ, ước tính thời gian chờ, số người trực tuyến                             |
+| Cảm xúc    | Emoji picker khi soạn tin; thả reaction emoji lên từng tin nhắn                                     |
+| Giao diện  | Chuyển dark/light theme; đổi ngôn ngữ giao diện Việt/Anh (i18n)                                     |
+| Thông báo  | Thông báo trình duyệt khi được ghép cặp hoặc có tin mới lúc tab ẩn                                  |
+| An toàn    | Bỏ qua (skip), chặn (block), bỏ chặn, báo cáo với lý do                                             |
+| Kiểm duyệt | Lọc từ ngữ xấu, giới hạn link, tự động cấm theo số report; trang `/admin`                           |
+| Khiếu nại  | Người bị ban gửi appeal; moderator duyệt/từ chối, duyệt sẽ gỡ ban và giữ liên kết report/transcript |
+| Vận hành   | Endpoint `/health` với số liệu; ban lưu bền vững qua restart                                        |
+| Mở rộng    | Redis adapter tùy chọn cho nhiều instance                                                           |
 
 ---
 
@@ -58,7 +59,7 @@ anon-chat/
 ├── .gitignore
 ├── README.md                 # Hướng dẫn ngắn (tiếng Anh)
 ├── TAI_LIEU.md               # Tài liệu chi tiết này
-├── data/                     # Dữ liệu bền vững (gitignored): reports, bans, chats, moderator accounts, audit logs
+├── data/                     # Dữ liệu bền vững (gitignored): reports, appeals, bans, chats, moderator accounts, audit logs
 ├── public/                   # Tài nguyên frontend tĩnh
 │   ├── index.html            # Giao diện chat chính
 │   ├── script.js             # Logic client
@@ -110,31 +111,34 @@ Toàn bộ server nằm trong một file. Hàm trung tâm là `createChatServer(
 
 Đối tượng `LIMITS` tập trung mọi giới hạn để dễ chỉnh:
 
-| Khóa                      | Giá trị                              | Ý nghĩa                               |
-| ------------------------- | ------------------------------------ | ------------------------------------- |
-| `maxUsernameLength`       | 20                                   | Độ dài tối đa biệt danh               |
-| `maxInterestsInputLength` | 200                                  | Độ dài tối đa chuỗi sở thích nhập vào |
-| `maxInterestLength`       | 30                                   | Độ dài tối đa một sở thích            |
-| `maxInterests`            | 10                                   | Số sở thích tối đa                    |
-| `maxMessageLength`        | 500                                  | Độ dài tối đa một tin nhắn            |
-| `maxReportReasonLength`   | 300                                  | Độ dài tối đa lý do báo cáo           |
-| `maxBlockedClientIds`     | 100                                  | Số người chặn tối đa gửi lên          |
-| `maxQueueSize`            | 1000                                 | Sức chứa hàng đợi                     |
-| `maxPayloadBytes`         | 10000                                | Kích thước payload Socket.IO tối đa   |
-| `messageRate`             | 8 / 10s                              | Giới hạn gửi tin nhắn                 |
-| `typingRate`              | 1 / 750ms                            | Giới hạn sự kiện "đang gõ"            |
-| `skipRate`                | 5 / 10s                              | Giới hạn bỏ qua                       |
-| `reactionRate`            | 15 / 10s                             | Giới hạn thả reaction                 |
-| `loginRate`               | 3 / 60s                              | Giới hạn đăng nhập                    |
-| `blockRate`               | 5 / 60s                              | Giới hạn chặn                         |
-| `reportRate`              | 3 / 60 phút                          | Giới hạn báo cáo                      |
-| `maxLinksPerMessage`      | 3                                    | Số link tối đa trong một tin nhắn     |
-| `autoBan`                 | ngưỡng 3, cửa sổ 60 phút, cấm 24 giờ | Tham số tự động cấm                   |
+| Khóa                      | Giá trị                              | Ý nghĩa                                |
+| ------------------------- | ------------------------------------ | -------------------------------------- |
+| `maxUsernameLength`       | 20                                   | Độ dài tối đa biệt danh                |
+| `maxInterestsInputLength` | 200                                  | Độ dài tối đa chuỗi sở thích nhập vào  |
+| `maxInterestLength`       | 30                                   | Độ dài tối đa một sở thích             |
+| `maxInterests`            | 10                                   | Số sở thích tối đa                     |
+| `maxMessageLength`        | 500                                  | Độ dài tối đa một tin nhắn             |
+| `maxReportReasonLength`   | 300                                  | Độ dài tối đa lý do báo cáo            |
+| `maxBlockedClientIds`     | 100                                  | Số người chặn tối đa gửi lên           |
+| `maxQueueSize`            | 1000                                 | Sức chứa hàng đợi                      |
+| `maxPayloadBytes`         | 10000                                | Kích thước payload Socket.IO tối đa    |
+| `messageRate`             | 8 / 10s                              | Giới hạn gửi tin nhắn                  |
+| `typingRate`              | 1 / 750ms                            | Giới hạn sự kiện "đang gõ"             |
+| `skipRate`                | 5 / 10s                              | Giới hạn bỏ qua                        |
+| `reactionRate`            | 15 / 10s                             | Giới hạn thả reaction                  |
+| `loginRate`               | 3 / 60s                              | Giới hạn đăng nhập                     |
+| `blockRate`               | 5 / 60s                              | Giới hạn chặn                          |
+| `reportRate`              | 3 / 60 phút                          | Giới hạn báo cáo                       |
+| `appealRate`              | 2 / 24 giờ                           | Giới hạn gửi khiếu nại theo IP         |
+| `maxAppealMessageLength`  | 1000                                 | Độ dài tối đa lời giải thích khiếu nại |
+| `maxLinksPerMessage`      | 3                                    | Số link tối đa trong một tin nhắn      |
+| `autoBan`                 | ngưỡng 3, cửa sổ 60 phút, cấm 24 giờ | Tham số tự động cấm                    |
 
 Các tập hợp/hằng khác:
 
 - `COLORS` — bảng màu gán ngẫu nhiên cho mỗi socket (màu hiển thị tên).
 - `REPORT_STATUSES` = `{new, reviewed, resolved}`.
+- `APPEAL_STATUSES` = `{pending, approved, rejected}`.
 - `LANGUAGES` = `{any, vi, en}`.
 - `REACTION_EMOJIS` = `{👍 ❤️ 😂 😮 😢 🔥}` — tập emoji reaction hợp lệ.
 - `PROFANITY` — danh sách từ cấm (Anh + Việt), dùng tạo `PROFANITY_PATTERN`.
@@ -148,6 +152,7 @@ Các tập hợp/hằng khác:
 - `parseLogin(data)` — validate toàn bộ hồ sơ đăng nhập: kiểu dữ liệu, ngôn ngữ hợp lệ, **bắt buộc** `safetyAcknowledged === true`, `clientId` hợp lệ, danh sách chặn hợp lệ, độ dài. Trả về `{ value }` đã làm sạch hoặc `{ error }`. Sở thích được tách theo dấu phẩy, viết thường, loại trùng, cắt còn tối đa 10.
 - `parseMessage(value)` — kiểm tra kiểu, độ dài, không rỗng.
 - `parseReport(data)` — kiểm tra có lý do, độ dài.
+- `parseAppeal(data)` — kiểm tra `clientId`, lời giải thích và độ dài khiếu nại.
 - `maskProfanity(text)` — thay từ cấm bằng dấu `*` (giữ độ dài). **Che chứ không chặn** để không làm gián đoạn hội thoại.
 - `countLinks(text)` — đếm số link để chặn tin spam nhiều link.
 - `escapeRegExp(value)` — escape ký tự đặc biệt khi dựng regex từ danh sách từ cấm.
@@ -183,6 +188,11 @@ Quản lý file `data/bans.json`, cùng kỹ thuật atomic write và hàng đ�
 - `save(entries)` — ghi danh sách cấm còn hiệu lực.
 - Mỗi mục: `{ clientId, banUntil }` (timestamp mili-giây hết hạn).
 
+Kho khiếu nại `createAppealStore(dataDirectory)` lưu `data/appeals.json` bằng hàng đợi thao tác và
+ghi nguyên tử. Mỗi mục giữ `clientId`, alias, lời giải thích, snapshot lệnh cấm, `reportId`, trạng thái
+`pending | approved | rejected`, ghi chú moderator và thông tin người duyệt. Chỉ một appeal `pending`
+được phép tồn tại cho mỗi `clientId`.
+
 ### 6.5. Redis adapter (tùy chọn) — `setupRedisAdapter(io, redisUrl, logger)`
 
 - Chỉ chạy khi có `redisUrl`. Nạp `redis` và `@socket.io/redis-adapter` theo kiểu **lazy require**.
@@ -216,6 +226,9 @@ Tham số: `{ logger, dataDir, adminToken, adminPath, adminSessionTtlMs, redisUr
 | PATCH    | `/api/admin/moderators/:id` | Admin đổi role, mật khẩu, hoặc bật/tắt tài khoản                                                                  |
 | GET      | `/api/admin/reports`        | Yêu cầu admin. Liệt kê báo cáo, lọc theo `?status=`                                                               |
 | PATCH    | `/api/admin/reports/:id`    | Yêu cầu admin. Cập nhật `status` + `moderationNote`                                                               |
+| POST     | `/api/appeals`              | Công khai có giới hạn. Người đang bị ban gửi một lời giải thích khiếu nại                                         |
+| GET      | `/api/admin/appeals`        | Yêu cầu admin. Liệt kê appeal, lọc theo `?status=pending`, `approved`, hoặc `rejected`                            |
+| PATCH    | `/api/admin/appeals/:id`    | Yêu cầu role moderator. Duyệt (gỡ ban) hoặc từ chối appeal                                                        |
 | (static) | `/*`                        | Phục vụ thư mục `public/`                                                                                         |
 
 **Xác thực admin:**
@@ -226,6 +239,8 @@ Tham số: `{ logger, dataDir, adminToken, adminPath, adminSessionTtlMs, redisUr
 - Mỗi request có session named account đều tra lại account; disable hoặc đổi role có hiệu lực ngay. Không thể vô hiệu hóa admin cuối cùng đang hoạt động.
 - Phiên mặc định sống 8 giờ (`ADMIN_SESSION_TTL_HOURS`), bị thu hồi khi logout hoặc restart server; đăng nhập bị giới hạn theo IP.
 - `express.json({ limit: '5kb' })` giới hạn body API.
+- `POST /api/appeals` chỉ nhận `clientId` đang có ban hiệu lực, giới hạn 2 lần mỗi IP trong 24 giờ,
+  và yêu cầu same-origin khi trình duyệt gửi request. Duyệt appeal gọi `liftBan()` và ghi audit event.
 
 ### 6.7. Thuật toán ghép cặp
 
@@ -357,20 +372,22 @@ Cờ trạng thái quan trọng: `hasActiveSession`, `isInChat`, `currentPartner
 - `viewer` chỉ đọc; `moderator` có thể xử lý report, gỡ ban, và xóa transcript; `admin` có toàn quyền.
 - Có nút đăng xuất, tự khôi phục phiên khi tải lại, và tự yêu cầu đăng nhập lại khi phiên hết hạn.
 - Liệt kê báo cáo, lọc theo trạng thái, mỗi báo cáo là một thẻ cho phép đổi `status` và ghi `moderationNote`, lưu qua `PATCH /api/admin/reports/:id`.
+- Tab **Appeals** hiển thị hàng đợi khiếu nại, lý do và snapshot lệnh cấm, mở transcript/report liên quan,
+  và cho moderator/admin nút **Approve & lift ban** hoặc **Reject appeal**.
 - Trang đặt `noindex, nofollow`.
 
 ---
 
 ## 9. Cấu hình (biến môi trường)
 
-| Biến                      | Mặc định                  | Mục đích                                                                     |
-| ------------------------- | ------------------------- | ---------------------------------------------------------------------------- |
-| `PORT`                    | `3000`                    | Cổng HTTP và Socket.IO                                                       |
-| `DATA_DIR`                | `./data`                  | Thư mục lưu báo cáo, lệnh cấm, transcript, tài khoản moderator, và audit log |
-| `ADMIN_TOKEN`             | _(khuyến nghị bootstrap)_ | Token tạo admin đầu tiên và truy cập khẩn cấp server-to-server               |
-| `ADMIN_SESSION_TTL_HOURS` | `8`                       | Thời gian sống phiên admin trong RAM (giờ)                                   |
-| `ADMIN_COOKIE_SECURE`     | `auto`                    | Ép cờ `Secure` cho cookie (`true`/`1`); tự bật trong HTTPS/production        |
-| `REDIS_URL`               | _(tùy chọn)_              | Bật Redis adapter cho nhiều instance, vd `redis://localhost:6379`            |
+| Biến                      | Mặc định                  | Mục đích                                                                             |
+| ------------------------- | ------------------------- | ------------------------------------------------------------------------------------ |
+| `PORT`                    | `3000`                    | Cổng HTTP và Socket.IO                                                               |
+| `DATA_DIR`                | `./data`                  | Thư mục lưu báo cáo, appeal, lệnh cấm, transcript, tài khoản moderator, và audit log |
+| `ADMIN_TOKEN`             | _(khuyến nghị bootstrap)_ | Token tạo admin đầu tiên và truy cập khẩn cấp server-to-server                       |
+| `ADMIN_SESSION_TTL_HOURS` | `8`                       | Thời gian sống phiên admin trong RAM (giờ)                                           |
+| `ADMIN_COOKIE_SECURE`     | `auto`                    | Ép cờ `Secure` cho cookie (`true`/`1`); tự bật trong HTTPS/production                |
+| `REDIS_URL`               | _(tùy chọn)_              | Bật Redis adapter cho nhiều instance, vd `redis://localhost:6379`                    |
 
 Bật kiểm duyệt (PowerShell):
 
@@ -460,6 +477,7 @@ Khuyến nghị production: HTTPS, rate limit ở tầng proxy/IP, công bố ch
 - `data/bans.json` — mảng lệnh cấm còn hiệu lực `{ clientId, banUntil }`.
 - `data/chats.json` — transcript chat đã che nội dung, tự dọn theo `CHAT_RETENTION_DAYS`.
 - `data/resolved-reports.json` và `data/moderation-log.json` — báo cáo đã xử lý và nhật ký thao tác moderator (kèm actor).
+- `data/appeals.json` — các khiếu nại ban, snapshot lệnh cấm, trạng thái và quyết định moderator.
 - `data/moderators.json` — tài khoản moderator, role, trạng thái, và hash mật khẩu salted `scrypt`; không commit hoặc chia sẻ file này.
 - Các file ghi nguyên tử (`.tmp` + `rename`) và tuần tự hóa qua hàng đợi thao tác. Thư mục `data/` nằm trong `.gitignore`.
 

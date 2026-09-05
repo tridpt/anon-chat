@@ -15,6 +15,9 @@ const refreshButton = document.getElementById('refresh-reports');
 const reportsContainer = document.getElementById('reports');
 const refreshResolvedButton = document.getElementById('refresh-resolved');
 const resolvedReportsContainer = document.getElementById('resolved-reports');
+const refreshAppealsButton = document.getElementById('refresh-appeals');
+const appealStatusFilter = document.getElementById('appeal-status-filter');
+const appealsContainer = document.getElementById('appeals');
 const refreshBansButton = document.getElementById('refresh-bans');
 const bansContainer = document.getElementById('bans');
 const refreshAuditButton = document.getElementById('refresh-audit');
@@ -39,6 +42,7 @@ const linkedReportsStat = document.getElementById('stat-linked-reports');
 const resolvedReportsStat = document.getElementById('stat-resolved-reports');
 const storedChatsStat = document.getElementById('stat-stored-chats');
 const activeBansStat = document.getElementById('stat-active-bans');
+const pendingAppealsStat = document.getElementById('stat-pending-appeals');
 const refreshModeratorsButton = document.getElementById('refresh-moderators');
 const moderatorForm = document.getElementById('moderator-form');
 const moderatorUsernameInput = document.getElementById('moderator-username');
@@ -49,7 +53,7 @@ const moderatorsContainer = document.getElementById('moderators');
 const TAB_KEY = 'ghostchat-admin-tab';
 const LEGACY_TOKEN_KEY = 'ghostchat-admin-token';
 const CHAT_PAGE_SIZE = 10;
-const TAB_ORDER = ['overview', 'reports', 'resolved', 'bans', 'audit', 'team', 'chats'];
+const TAB_ORDER = ['overview', 'reports', 'appeals', 'resolved', 'bans', 'audit', 'team', 'chats'];
 let activeTab = 'overview';
 let chatPage = 1;
 let isAuthenticated = false;
@@ -85,6 +89,7 @@ function loadActiveTab() {
   if (!isAuthenticated) return;
   if (activeTab === 'overview') return loadOverview();
   if (activeTab === 'reports' || activeTab === 'resolved') return loadReports();
+  if (activeTab === 'appeals') return loadAppeals();
   if (activeTab === 'bans') return loadBans();
   if (activeTab === 'audit') return loadAuditLog();
   if (activeTab === 'team') return loadModerators();
@@ -94,6 +99,7 @@ function loadActiveTab() {
 function clearWorkspace() {
   reportsContainer.innerHTML = '';
   resolvedReportsContainer.innerHTML = '';
+  appealsContainer.innerHTML = '';
   bansContainer.innerHTML = '';
   auditLogContainer.innerHTML = '';
   moderatorsContainer.innerHTML = '';
@@ -104,6 +110,7 @@ function clearWorkspace() {
   resolvedReportsStat.innerText = '—';
   storedChatsStat.innerText = '—';
   activeBansStat.innerText = '—';
+  pendingAppealsStat.innerText = '—';
 }
 
 function updateRoleUi() {
@@ -285,6 +292,10 @@ function formatAuditAction(event) {
   if (event.type === 'moderator_created') return 'Moderator account created';
   if (event.type === 'moderator_updated') return 'Moderator account updated';
   if (event.type === 'transcript_deleted') return 'Transcript deleted';
+  if (event.type === 'appeal_submitted') return 'Ban appeal submitted';
+  if (event.type === 'appeal_reviewed') {
+    return event.appealStatus === 'approved' ? 'Ban appeal approved' : 'Ban appeal rejected';
+  }
   if (event.type === 'ban_lifted') return 'Ban lifted';
   if (event.type === 'automatic_ban') return 'Automatic 24-hour suspension';
   if (event.moderationAction === 'permanent_ban') return 'Permanent ban applied';
@@ -602,6 +613,174 @@ function renderReports(reports, container, emptyMessage, options = {}) {
   reports.forEach((report) => container.appendChild(createReportCard(report, options)));
 }
 
+function formatAppealBanSnapshot(snapshot) {
+  if (!snapshot) return 'Ban details unavailable.';
+  const restriction = snapshot.permanent
+    ? 'Permanent ban'
+    : snapshot.expiresAt
+      ? `Blocked until ${formatDate(snapshot.expiresAt)}`
+      : 'Temporary restriction';
+  const action = formatBanAction(snapshot.action);
+  return `${restriction} · ${action}${snapshot.reason ? ` · ${snapshot.reason}` : ''}`;
+}
+
+function createAppealCard(appeal) {
+  const card = document.createElement('article');
+  card.className = `appeal-card status-${appeal.status}`;
+
+  const topline = document.createElement('div');
+  topline.className = 'report-topline';
+  const title = document.createElement('div');
+  const heading = document.createElement('h2');
+  heading.innerText = `${appeal.alias || 'Anonymous user'} · Ban appeal`;
+  const metadata = document.createElement('p');
+  metadata.className = 'report-meta';
+  metadata.innerText = `${formatDate(appeal.createdAt)} · ${appeal.clientId} · ${appeal.id}`;
+  title.append(heading, metadata);
+  const badge = document.createElement('span');
+  badge.className = `badge ${appeal.status}`;
+  badge.innerText = appeal.status;
+  topline.append(title, badge);
+  card.appendChild(topline);
+
+  const banSummary = document.createElement('p');
+  banSummary.className = 'appeal-ban-summary';
+  banSummary.innerText = formatAppealBanSnapshot(appeal.banSnapshot);
+  card.appendChild(banSummary);
+
+  const explanation = document.createElement('p');
+  explanation.className = 'appeal-message';
+  explanation.innerText = appeal.message;
+  card.appendChild(explanation);
+
+  const chatId = appeal.chatId || appeal.report?.chatId;
+  if (appeal.report) {
+    const related = document.createElement('p');
+    related.className = 'appeal-related';
+    related.innerText = `Related report: ${appeal.report.id} · ${appeal.report.reason}`;
+    card.appendChild(related);
+  }
+
+  if (chatId) {
+    const transcriptActions = document.createElement('div');
+    transcriptActions.className = 'report-actions';
+    const viewTranscript = document.createElement('button');
+    viewTranscript.type = 'button';
+    viewTranscript.className = 'secondary';
+    viewTranscript.innerText = 'View transcript';
+    let transcriptPreview = document.createElement('div');
+    transcriptPreview.className = 'transcript-preview chat-messages';
+    transcriptPreview.hidden = true;
+    let transcriptLoaded = false;
+    viewTranscript.addEventListener('click', async () => {
+      if (!transcriptPreview.hidden) {
+        transcriptPreview.hidden = true;
+        viewTranscript.innerText = 'View transcript';
+        return;
+      }
+      if (transcriptLoaded) {
+        transcriptPreview.hidden = false;
+        viewTranscript.innerText = 'Hide transcript';
+        return;
+      }
+      viewTranscript.disabled = true;
+      try {
+        const { chat } = await api(`/api/admin/chats/${encodeURIComponent(chatId)}`);
+        transcriptPreview.replaceWith(createTranscriptPreview(chat));
+        transcriptPreview = card.querySelector('.transcript-preview');
+        transcriptPreview.hidden = false;
+        transcriptLoaded = true;
+        viewTranscript.innerText = 'Hide transcript';
+      } catch (error) {
+        setStatus(error.message, true);
+      } finally {
+        viewTranscript.disabled = false;
+      }
+    });
+    transcriptActions.appendChild(viewTranscript);
+    card.append(transcriptActions, transcriptPreview);
+  }
+
+  if (appeal.reviewedAt) {
+    const reviewed = document.createElement('p');
+    reviewed.className = 'appeal-review-meta';
+    const reviewer = appeal.reviewedBy?.username || 'moderator';
+    reviewed.innerText = `Reviewed ${formatDate(appeal.reviewedAt)} by ${reviewer}`;
+    card.appendChild(reviewed);
+  }
+  if (appeal.moderatorNote) {
+    const note = document.createElement('p');
+    note.className = 'appeal-review-note';
+    note.innerText = `Moderator note: ${appeal.moderatorNote}`;
+    card.appendChild(note);
+  }
+
+  if (appeal.status === 'pending' && canModerate()) {
+    const controls = document.createElement('div');
+    controls.className = 'appeal-controls';
+    const note = document.createElement('textarea');
+    note.maxLength = 300;
+    note.placeholder = 'Moderator note (optional)';
+    note.setAttribute('aria-label', 'Moderator note for this appeal');
+    const actions = document.createElement('div');
+    actions.className = 'appeal-decision-actions';
+    const approve = document.createElement('button');
+    approve.type = 'button';
+    approve.innerText = 'Approve & lift ban';
+    const reject = document.createElement('button');
+    reject.type = 'button';
+    reject.className = 'danger-button';
+    reject.innerText = 'Reject appeal';
+
+    async function review(status) {
+      const isApproval = status === 'approved';
+      const confirmation = isApproval
+        ? `Approve ${appeal.alias || 'this appeal'} and lift the ban?`
+        : `Reject the appeal from ${appeal.alias || 'this user'}?`;
+      if (!window.confirm(confirmation)) return;
+      approve.disabled = true;
+      reject.disabled = true;
+      note.disabled = true;
+      try {
+        await api(`/api/admin/appeals/${encodeURIComponent(appeal.id)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ status, moderationNote: note.value.trim() }),
+        });
+        setStatus(isApproval ? 'Appeal approved and ban lifted.' : 'Appeal rejected.');
+        await loadAppeals();
+      } catch (error) {
+        setStatus(error.message, true);
+        approve.disabled = false;
+        reject.disabled = false;
+        note.disabled = false;
+      }
+    }
+
+    approve.addEventListener('click', () => review('approved'));
+    reject.addEventListener('click', () => review('rejected'));
+    actions.append(approve, reject);
+    controls.append(note, actions);
+    card.appendChild(controls);
+  }
+
+  return card;
+}
+
+function renderAppeals(appeals) {
+  appealsContainer.innerHTML = '';
+  if (!appeals.length) {
+    const empty = document.createElement('p');
+    empty.className = 'empty-state';
+    empty.innerText =
+      appealStatusFilter.value === 'pending'
+        ? 'No pending appeals. The queue is clear.'
+        : 'No ban appeals found.';
+    appealsContainer.appendChild(empty);
+    return;
+  }
+  appeals.forEach((appeal) => appealsContainer.appendChild(createAppealCard(appeal)));
+}
+
 function createChatCard(chat) {
   const card = document.createElement('article');
   card.className = 'report-card';
@@ -710,18 +889,42 @@ async function loadReports() {
   }
 }
 
+async function loadAppeals() {
+  try {
+    setStatus('Loading ban appeals...');
+    refreshAppealsButton.disabled = true;
+    const query = appealStatusFilter.value
+      ? `?status=${encodeURIComponent(appealStatusFilter.value)}`
+      : '';
+    const { appeals } = await api(`/api/admin/appeals${query}`);
+    renderAppeals(appeals);
+    if (appealStatusFilter.value === 'pending') {
+      pendingAppealsStat.innerText = String(appeals.length);
+    }
+    setStatus(`${appeals.length} appeal${appeals.length === 1 ? '' : 's'} found.`);
+  } catch (error) {
+    appealsContainer.innerHTML = '';
+    setStatus(error.message, true);
+  } finally {
+    refreshAppealsButton.disabled = false;
+  }
+}
+
 async function loadOverview() {
   try {
     setStatus('Loading overview...');
-    const [reportsResult, archiveResult, bansResult, chatsResult] = await Promise.all([
-      api('/api/admin/reports'),
-      api('/api/admin/reports/archive'),
-      api('/api/admin/bans'),
-      api('/api/admin/chats?page=1&pageSize=1'),
-    ]);
+    const [reportsResult, archiveResult, bansResult, chatsResult, appealsResult] =
+      await Promise.all([
+        api('/api/admin/reports'),
+        api('/api/admin/reports/archive'),
+        api('/api/admin/bans'),
+        api('/api/admin/chats?page=1&pageSize=1'),
+        api('/api/admin/appeals?status=pending'),
+      ]);
     updateReportStats(reportsResult.reports, archiveResult.reports);
     activeBansStat.innerText = String(bansResult.bans.length);
     storedChatsStat.innerText = String(chatsResult.total);
+    pendingAppealsStat.innerText = String(appealsResult.appeals.length);
     setStatus('Overview refreshed.');
   } catch (error) {
     setStatus(error.message, true);
@@ -961,6 +1164,7 @@ moderatorForm.addEventListener('submit', async (event) => {
 
 refreshButton.addEventListener('click', loadReports);
 refreshResolvedButton.addEventListener('click', loadReports);
+refreshAppealsButton.addEventListener('click', loadAppeals);
 refreshBansButton.addEventListener('click', loadBans);
 refreshAuditButton.addEventListener('click', loadAuditLog);
 refreshModeratorsButton.addEventListener('click', loadModerators);
@@ -983,6 +1187,7 @@ nextChatPage.addEventListener('click', () => {
 exportJsonButton.addEventListener('click', () => exportChats('json'));
 exportCsvButton.addEventListener('click', () => exportChats('csv'));
 statusFilter.addEventListener('change', loadReports);
+appealStatusFilter.addEventListener('change', loadAppeals);
 
 activeTab = getSavedTab();
 setActiveTab(activeTab, { load: false });

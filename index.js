@@ -56,6 +56,8 @@ const LIMITS = {
   adminLoginRate: { max: 5, windowMs: 15 * 60_000 },
   blockRate: { max: 5, windowMs: 60_000 },
   reportRate: { max: 3, windowMs: 60 * 60_000 },
+  appealRate: { max: 2, windowMs: 24 * 60 * 60_000 },
+  maxAppealMessageLength: 1_000,
   maxLinksPerMessage: 3,
   autoBan: { reportThreshold: 3, windowMs: 60 * 60_000, banDurationMs: 24 * 60 * 60_000 },
   // Coarse per-IP limits applied before any per-socket handling, as a lightweight
@@ -150,6 +152,7 @@ function countLinks(text) {
   return matches ? matches.length : 0;
 }
 const REPORT_STATUSES = new Set(['new', 'reviewed', 'resolved']);
+const APPEAL_STATUSES = new Set(['pending', 'approved', 'rejected']);
 const MODERATION_ACTIONS = new Set(['none', 'chat_block', 'permanent_ban']);
 const MODERATOR_ROLES = new Set(['admin', 'moderator', 'viewer']);
 const CHAT_BLOCK_DURATION_MS = 24 * 60 * 60 * 1000;
@@ -324,6 +327,42 @@ function parseReport(data) {
   }
 
   return { value: reason };
+}
+
+function parseAppeal(data) {
+  if (!isPlainObject(data)) {
+    return { error: 'Invalid appeal data.' };
+  }
+
+  if (!isClientId(data.clientId)) {
+    return { error: 'Your anonymous session is invalid.' };
+  }
+
+  if (typeof data.message !== 'string') {
+    return { error: 'An appeal explanation is required.' };
+  }
+
+  if (data.message.length > LIMITS.maxAppealMessageLength) {
+    return {
+      error: `Appeal explanations can be at most ${LIMITS.maxAppealMessageLength} characters.`,
+    };
+  }
+
+  const message = cleanText(data.message);
+  if (!message) {
+    return { error: 'An appeal explanation is required.' };
+  }
+
+  const alias =
+    typeof data.alias === 'string' ? cleanText(data.alias).slice(0, LIMITS.maxUsernameLength) : '';
+
+  return {
+    value: {
+      clientId: data.clientId,
+      alias,
+      message,
+    },
+  };
 }
 
 function copyValue(value) {
@@ -593,6 +632,132 @@ function createReportStore(dataDirectory) {
         await persistAll();
         return copyValue(updated);
       }),
+  };
+}
+
+function isStoredAppeal(value) {
+  return (
+    isPlainObject(value) &&
+    typeof value.id === 'string' &&
+    isClientId(value.clientId) &&
+    APPEAL_STATUSES.has(value.status) &&
+    typeof value.message === 'string' &&
+    typeof value.alias === 'string' &&
+    (value.reportId === null || typeof value.reportId === 'string') &&
+    isPlainObject(value.banSnapshot) &&
+    typeof value.createdAt === 'string' &&
+    typeof value.updatedAt === 'string' &&
+    typeof value.moderatorNote === 'string' &&
+    (value.reviewedAt === null || typeof value.reviewedAt === 'string') &&
+    (value.reviewedBy === null || isPlainObject(value.reviewedBy))
+  );
+}
+
+function toPublicAppeal(appeal) {
+  return {
+    id: appeal.id,
+    status: appeal.status,
+    createdAt: appeal.createdAt,
+    updatedAt: appeal.updatedAt,
+  };
+}
+
+function createAppealStore(dataDirectory) {
+  const appealsFile = path.join(dataDirectory, 'appeals.json');
+  let appeals = [];
+  let initialized = false;
+  let operationQueue = Promise.resolve();
+
+  function enqueue(operation) {
+    const task = operationQueue.then(operation, operation);
+    operationQueue = task.catch(() => undefined);
+    return task;
+  }
+
+  async function initialize() {
+    if (initialized) return;
+    await fs.mkdir(dataDirectory, { recursive: true });
+    try {
+      const contents = await fs.readFile(appealsFile, 'utf8');
+      const parsed = JSON.parse(contents);
+      if (!Array.isArray(parsed)) throw new Error('Appeal store must contain an array.');
+      appeals = parsed.filter(isStoredAppeal);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      appeals = [];
+    }
+    initialized = true;
+  }
+
+  async function persist() {
+    await fs.mkdir(dataDirectory, { recursive: true });
+    const temporaryFile = `${appealsFile}.${process.pid}.${Date.now()}.tmp`;
+    await fs.writeFile(temporaryFile, `${JSON.stringify(appeals, null, 2)}\n`, 'utf8');
+    await fs.rename(temporaryFile, appealsFile);
+  }
+
+  return {
+    list: (status = null) =>
+      enqueue(async () => {
+        await initialize();
+        const matching = status ? appeals.filter((appeal) => appeal.status === status) : appeals;
+        return copyValue(matching);
+      }),
+    get: (id) =>
+      enqueue(async () => {
+        await initialize();
+        return copyValue(appeals.find((appeal) => appeal.id === id) || null);
+      }),
+    findPendingByClientId: (clientId) =>
+      enqueue(async () => {
+        await initialize();
+        return copyValue(
+          appeals.find((appeal) => appeal.clientId === clientId && appeal.status === 'pending') ||
+            null,
+        );
+      }),
+    append: (appeal) =>
+      enqueue(async () => {
+        await initialize();
+        appeals.unshift(copyValue(appeal));
+        await persist();
+        return copyValue(appeal);
+      }),
+    create: (appeal) =>
+      enqueue(async () => {
+        await initialize();
+        const existing = appeals.find(
+          (item) => item.clientId === appeal.clientId && item.status === 'pending',
+        );
+        if (existing) return { error: 'pending_exists', appeal: copyValue(existing) };
+        appeals.unshift(copyValue(appeal));
+        await persist();
+        return { appeal: copyValue(appeal) };
+      }),
+    update: (id, changes) =>
+      enqueue(async () => {
+        await initialize();
+        const index = appeals.findIndex((appeal) => appeal.id === id);
+        if (index === -1) return null;
+        const updated = { ...appeals[index], ...changes };
+        appeals[index] = updated;
+        await persist();
+        return copyValue(updated);
+      }),
+    review: (id, changes) =>
+      enqueue(async () => {
+        await initialize();
+        const index = appeals.findIndex((appeal) => appeal.id === id);
+        if (index === -1) return { error: 'not_found' };
+        if (appeals[index].status !== 'pending') {
+          return { error: 'already_reviewed', appeal: copyValue(appeals[index]) };
+        }
+        const updated = { ...appeals[index], ...changes };
+        appeals[index] = updated;
+        await persist();
+        return { appeal: copyValue(updated) };
+      }),
+    flush: () => operationQueue,
   };
 }
 
@@ -988,6 +1153,7 @@ function createChatServer({
   const server = http.createServer(app);
   const io = new Server(server, { maxHttpBufferSize: LIMITS.maxPayloadBytes });
   const reportStore = createReportStore(dataDir);
+  const appealStore = createAppealStore(dataDir);
   const retentionDays = Number.parseInt(process.env.CHAT_RETENTION_DAYS || '30', 10);
   const chatStore = createChatStore(dataDir, Number.isFinite(retentionDays) ? retentionDays : 30);
   const banStore = createBanStore(dataDir);
@@ -996,6 +1162,7 @@ function createChatServer({
   const httpRateLimiter = createIpRateLimiter(LIMITS.httpRate);
   const connectionRateLimiter = createIpRateLimiter(LIMITS.connectionRate);
   const adminLoginRateLimiter = createIpRateLimiter(LIMITS.adminLoginRate);
+  const appealRateLimiter = createIpRateLimiter(LIMITS.appealRate);
   const sessionTtlMs =
     Number.isFinite(adminSessionTtlMs) && adminSessionTtlMs > 0
       ? adminSessionTtlMs
@@ -1089,6 +1256,17 @@ function createChatServer({
       return false;
     }
     return true;
+  }
+
+  function getActiveBan(clientId, now = Date.now()) {
+    const ban = bannedClients.get(clientId);
+    if (!ban) return null;
+    if (!isActiveBan(ban, now)) {
+      bannedClients.delete(clientId);
+      persistBans();
+      return null;
+    }
+    return ban;
   }
 
   async function registerReportAgainst(clientId, details = {}, now = Date.now()) {
@@ -1185,10 +1363,59 @@ function createChatServer({
   async function liftBan(clientId) {
     const ban = bannedClients.get(clientId);
     if (!ban) return null;
+    const previousReports = recentReportsByClient.get(clientId);
     bannedClients.delete(clientId);
     recentReportsByClient.delete(clientId);
-    await persistBans();
+    try {
+      await persistBans();
+    } catch (error) {
+      // Restore memory state when the durable ban update fails.
+      bannedClients.set(clientId, ban);
+      if (previousReports) recentReportsByClient.set(clientId, previousReports);
+      throw error;
+    }
     return copyValue(ban);
+  }
+
+  function serializeBanSnapshot(ban) {
+    if (!ban) return null;
+    return {
+      permanent: ban?.permanent === true,
+      action: ban?.action || 'automatic',
+      reason: ban?.reason || '',
+      appliedAt: ban?.appliedAt || null,
+      expiresAt: ban?.permanent ? null : new Date(ban.banUntil).toISOString(),
+    };
+  }
+
+  async function findRelatedReport(appeal) {
+    const reports = await reportStore.listAll();
+    return (
+      reports.find(
+        (report) =>
+          (appeal.reportId && report.id === appeal.reportId) ||
+          report.reportedUser?.clientId === appeal.clientId,
+      ) || null
+    );
+  }
+
+  async function enrichAppeals(appeals) {
+    const reports = await reportStore.listAll();
+    return appeals.map((appeal) => {
+      const report =
+        reports.find(
+          (item) =>
+            (appeal.reportId && item.id === appeal.reportId) ||
+            item.reportedUser?.clientId === appeal.clientId,
+        ) || null;
+      const activeBan = getActiveBan(appeal.clientId);
+      return {
+        ...appeal,
+        chatId: report?.chatId || null,
+        report: report ? copyValue(report) : null,
+        activeBan: activeBan ? serializeBanSnapshot(activeBan) : null,
+      };
+    });
   }
 
   async function applyModerationAction(report, action) {
@@ -1470,6 +1697,82 @@ function createChatServer({
       averageMatchWaitMs: averageMatchWaitMs === null ? null : Math.round(averageMatchWaitMs),
       activeBans: listActiveBans().length,
     });
+  });
+
+  app.post('/api/appeals', async (request, response) => {
+    response.set('Cache-Control', 'no-store');
+    if (!isSameOriginRequest(request)) {
+      response.status(403).json({ error: 'Appeals must be submitted from the same origin.' });
+      return;
+    }
+    if (appealRateLimiter.isLimited(getRequestIp(request))) {
+      response.set('Retry-After', String(Math.ceil(LIMITS.appealRate.windowMs / 1000)));
+      response.status(429).json({ error: 'Too many appeal attempts. Please try again tomorrow.' });
+      return;
+    }
+
+    const parsed = parseAppeal(request.body);
+    if (parsed.error) {
+      response.status(400).json({ error: parsed.error });
+      return;
+    }
+
+    const ban = getActiveBan(parsed.value.clientId);
+    if (!ban) {
+      response.status(404).json({ error: 'No active ban was found for this anonymous session.' });
+      return;
+    }
+
+    let relatedReport;
+    try {
+      relatedReport = await findRelatedReport({
+        clientId: parsed.value.clientId,
+        reportId: ban.reportId,
+      });
+    } catch (error) {
+      logError(error);
+      response.status(500).json({ error: 'Could not load the related moderation case.' });
+      return;
+    }
+    const now = new Date().toISOString();
+    const appeal = {
+      id: crypto.randomUUID(),
+      clientId: parsed.value.clientId,
+      alias: ban.alias || parsed.value.alias || 'Anonymous user',
+      message: parsed.value.message,
+      status: 'pending',
+      reportId: ban.reportId || relatedReport?.id || null,
+      banSnapshot: serializeBanSnapshot(ban),
+      createdAt: now,
+      updatedAt: now,
+      moderatorNote: '',
+      reviewedAt: null,
+      reviewedBy: null,
+    };
+
+    try {
+      const result = await appealStore.create(appeal);
+      if (result.error === 'pending_exists') {
+        response.status(409).json({
+          error: 'An appeal for this anonymous session is already pending.',
+          appeal: toPublicAppeal(result.appeal),
+        });
+        return;
+      }
+
+      await recordModerationEvent({
+        type: 'appeal_submitted',
+        appealId: appeal.id,
+        clientId: appeal.clientId,
+        alias: appeal.alias,
+        reportId: appeal.reportId,
+        note: 'Anonymous user submitted a ban appeal.',
+      });
+      response.status(201).json({ appeal: toPublicAppeal(appeal) });
+    } catch (error) {
+      logError(error);
+      response.status(500).json({ error: 'Could not submit the appeal.' });
+    }
   });
 
   function serializeAdminPrincipal(principal) {
@@ -1788,6 +2091,111 @@ function createChatServer({
     } catch (error) {
       logError(error);
       response.status(500).json({ error: 'Could not load resolved reports.' });
+    }
+  });
+  app.get('/api/admin/appeals', requireAdmin, async (request, response) => {
+    try {
+      const status = request.query.status;
+      if (status && !APPEAL_STATUSES.has(status)) {
+        response.status(400).json({ error: 'Invalid appeal status.' });
+        return;
+      }
+      const appeals = await appealStore.list(status || null);
+      response.json({ appeals: await enrichAppeals(appeals) });
+    } catch (error) {
+      logError(error);
+      response.status(500).json({ error: 'Could not load ban appeals.' });
+    }
+  });
+  app.patch('/api/admin/appeals/:id', requireAdmin, requireModerator, async (request, response) => {
+    try {
+      if (!isModeratorId(request.params.id)) {
+        response.status(400).json({ error: 'Invalid appeal ID.' });
+        return;
+      }
+
+      const body = isPlainObject(request.body) ? request.body : {};
+      const status = body.status;
+      if (status !== 'approved' && status !== 'rejected') {
+        response.status(400).json({ error: 'Choose Approved or Rejected for an appeal.' });
+        return;
+      }
+
+      const moderationNote = body.moderationNote ?? '';
+      if (
+        typeof moderationNote !== 'string' ||
+        moderationNote.length > LIMITS.maxReportReasonLength
+      ) {
+        response.status(400).json({ error: 'Moderation note is invalid.' });
+        return;
+      }
+
+      const current = await appealStore.get(request.params.id);
+      if (!current) {
+        response.status(404).json({ error: 'Appeal not found.' });
+        return;
+      }
+
+      const now = new Date().toISOString();
+      const reviewChanges = {
+        status,
+        moderationNote: cleanText(moderationNote),
+        reviewedAt: now,
+        updatedAt: now,
+        reviewedBy: {
+          id: request.admin.id,
+          username: request.admin.username,
+          role: request.admin.role,
+        },
+      };
+      const result = await appealStore.review(request.params.id, reviewChanges);
+      if (result.error === 'not_found') {
+        response.status(404).json({ error: 'Appeal not found.' });
+        return;
+      }
+      if (result.error === 'already_reviewed') {
+        response.status(409).json({ error: 'This appeal has already been reviewed.' });
+        return;
+      }
+
+      let liftedBan = null;
+      if (status === 'approved') {
+        try {
+          liftedBan = await liftBan(current.clientId);
+        } catch (error) {
+          // Keep the appeal actionable if the ban store cannot be updated.
+          await appealStore.update(request.params.id, {
+            status: 'pending',
+            moderationNote: '',
+            reviewedAt: null,
+            updatedAt: current.updatedAt,
+            reviewedBy: null,
+          });
+          throw error;
+        }
+      }
+
+      const reviewedAppeal = result.appeal;
+      await recordModerationEvent(
+        {
+          type: 'appeal_reviewed',
+          appealId: reviewedAppeal.id,
+          clientId: reviewedAppeal.clientId,
+          alias: reviewedAppeal.alias,
+          reportId: reviewedAppeal.reportId,
+          appealStatus: reviewedAppeal.status,
+          moderationAction: status === 'approved' ? 'ban_lifted' : 'appeal_rejected',
+          banLifted: Boolean(liftedBan),
+          note: reviewedAppeal.moderationNote,
+        },
+        request.admin,
+      );
+
+      const [enriched] = await enrichAppeals([reviewedAppeal]);
+      response.json({ appeal: enriched });
+    } catch (error) {
+      logError(error);
+      response.status(500).json({ error: 'Could not review the ban appeal.' });
     }
   });
   app.get('/api/admin/bans', requireAdmin, async (request, response) => {
@@ -2833,9 +3241,11 @@ function createChatServer({
         httpRateLimiter.stop();
         connectionRateLimiter.stop();
         adminLoginRateLimiter.stop();
+        appealRateLimiter.stop();
         io.close(async (error) => {
           try {
             await chatStore.flush();
+            await appealStore.flush();
             await moderatorStore.flush();
             await auditStore.flush();
             if (redisClients) {

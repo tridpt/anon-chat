@@ -12,7 +12,7 @@
       rel="stylesheet"
       href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
     />
-    <link rel="stylesheet" href="style.css?v=3" />
+    <link rel="stylesheet" href="style.css?v=4" />
   </head>
   <body>
     <div class="app-container">
@@ -138,6 +138,15 @@
                 </button>
               </form>
               <p id="login-error" class="form-error" role="status" aria-live="polite" hidden></p>
+              <button
+                id="appeal-ban-btn"
+                type="button"
+                class="text-btn appeal-link"
+                aria-controls="appeal-dialog"
+              >
+                <i class="fa-solid fa-scale-balanced" aria-hidden="true"></i>
+                <span data-i18n="appeal_open">Appeal a ban</span>
+              </button>
             </div>
           </div>
           <button
@@ -338,6 +347,45 @@
               </button>
             </div>
           </section>
+        </dialog>
+
+        <dialog
+          id="appeal-dialog"
+          class="report-dialog appeal-dialog"
+          aria-labelledby="appeal-title"
+        >
+          <form id="appeal-form" class="report-form">
+            <h2 id="appeal-title" data-i18n="appeal_title">Appeal a chat restriction</h2>
+            <p data-i18n="appeal_desc">
+              Explain why you think the restriction should be reconsidered. A moderator will review
+              the related case.
+            </p>
+            <label for="appeal-message" data-i18n="appeal_message_label">Your explanation</label>
+            <textarea
+              id="appeal-message"
+              maxlength="1000"
+              required
+              data-i18n-placeholder="appeal_message_placeholder"
+              placeholder="Tell us what happened and why the ban should be reconsidered."
+            ></textarea>
+            <p class="appeal-hint" data-i18n="appeal_hint">
+              Your anonymous session ID is attached automatically.
+            </p>
+            <p id="appeal-feedback" class="form-error" role="status" aria-live="polite" hidden></p>
+            <div class="dialog-actions">
+              <button id="appeal-cancel" type="button" class="btn-secondary" data-i18n="cancel">
+                Cancel
+              </button>
+              <button
+                id="appeal-submit"
+                type="submit"
+                class="btn-primary"
+                data-i18n="appeal_submit"
+              >
+                Submit appeal
+              </button>
+            </div>
+          </form>
         </dialog>
       </main>
     </div>

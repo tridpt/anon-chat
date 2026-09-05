@@ -73,6 +73,13 @@ const manageBlocksBtn = document.getElementById('manage-blocks-btn');
 const blockedDialog = document.getElementById('blocked-dialog');
 const blockedList = document.getElementById('blocked-list');
 const blockedClose = document.getElementById('blocked-close');
+const appealBanBtn = document.getElementById('appeal-ban-btn');
+const appealDialog = document.getElementById('appeal-dialog');
+const appealForm = document.getElementById('appeal-form');
+const appealMessage = document.getElementById('appeal-message');
+const appealFeedback = document.getElementById('appeal-feedback');
+const appealCancel = document.getElementById('appeal-cancel');
+const appealSubmit = document.getElementById('appeal-submit');
 const themeToggle = document.getElementById('theme-toggle');
 const emojiBtn = document.getElementById('emoji-btn');
 const emojiPanel = document.getElementById('emoji-panel');
@@ -396,6 +403,69 @@ function clearLoginError() {
   loginError.hidden = true;
 }
 
+function showAppealFeedback(message, isError = false) {
+  appealFeedback.innerText = message;
+  appealFeedback.hidden = !message;
+  appealFeedback.classList.toggle('success', Boolean(message) && !isError);
+}
+
+function openAppealDialog() {
+  showAppealFeedback('');
+  appealMessage.value = '';
+  appealSubmit.disabled = false;
+  if (!appealDialog.open) appealDialog.showModal();
+  appealMessage.focus();
+}
+
+async function submitAppeal(event) {
+  event.preventDefault();
+  const message = appealMessage.value.trim();
+  if (!message) {
+    showAppealFeedback(t('appeal_required'), true);
+    appealMessage.focus();
+    return;
+  }
+
+  appealSubmit.disabled = true;
+  showAppealFeedback('');
+  try {
+    const response = await fetch('/api/appeals', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        clientId,
+        alias: myUsername || usernameInput.value.trim(),
+        message,
+      }),
+    });
+    let data = {};
+    try {
+      data = await response.json();
+    } catch {
+      // Keep the localized fallback for non-JSON errors.
+    }
+
+    if (response.status === 409) {
+      showAppealFeedback(t('appeal_pending'), true);
+      return;
+    }
+    if (response.status === 404) {
+      showAppealFeedback(t('appeal_no_ban'), true);
+      return;
+    }
+    if (!response.ok) throw new Error(data.error || t('appeal_failed'));
+
+    appealMessage.value = '';
+    showAppealFeedback(t('appeal_sent'));
+    appealBanBtn.classList.remove('available');
+  } catch (error) {
+    showAppealFeedback(error.message || t('appeal_failed'), true);
+  } finally {
+    appealSubmit.disabled = false;
+  }
+}
+
 function joinQueue() {
   if (!hasActiveSession || !socket.connected || !safetyAcknowledged) return;
 
@@ -460,6 +530,7 @@ socket.on('app_error', (error) => {
     blockBtn.disabled = true;
     socket.disconnect();
     showLoginError(message);
+    appealBanBtn.classList.add('available');
     showScreen('login-screen');
     return;
   }
@@ -834,6 +905,7 @@ loginForm.addEventListener('submit', (e) => {
   hasActiveSession = true;
   isInChat = false;
   clearLoginError();
+  appealBanBtn.classList.remove('available');
   setWaitingStatus(t('connecting_title'), t('connecting_detail'));
   queueStatus.innerText = '';
   showScreen('waiting-screen');
@@ -968,6 +1040,10 @@ manageBlocksBtn.addEventListener('click', () => {
 });
 
 blockedClose.addEventListener('click', () => blockedDialog.close());
+
+appealBanBtn.addEventListener('click', openAppealDialog);
+appealCancel.addEventListener('click', () => appealDialog.close());
+appealForm.addEventListener('submit', submitAppeal);
 
 reportForm.addEventListener('submit', (event) => {
   event.preventDefault();

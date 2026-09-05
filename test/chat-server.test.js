@@ -446,6 +446,159 @@ test('persists reports and protects admin review', async (t) => {
   await queued;
 });
 
+test('accepts ban appeals, links the case, and lifts the ban when approved', async (t) => {
+  const adminToken = 'test-admin-token-123';
+  const url = await createTestServer(t, { adminToken });
+  const headers = { Authorization: `Bearer ${adminToken}` };
+  const bobId = 'client-bob-123456';
+  const alice = await connectClient(t, url);
+  const bob = await connectClient(t, url);
+
+  const aliceMatched = waitForEvent(alice, 'matched');
+  const bobMatched = waitForEvent(bob, 'matched');
+  login(alice, { username: 'Alice', interests: 'books', clientId: 'client-alice-12345' });
+  login(bob, { username: 'Bob', interests: 'books', clientId: bobId });
+  await Promise.all([aliceMatched, bobMatched]);
+
+  const reportReceived = waitForEvent(alice, 'report_received');
+  alice.emit('reportPartner', { reason: 'Harassment or bullying' });
+  await reportReceived;
+  const reportsResponse = await fetch(`${url}/api/admin/reports`, { headers });
+  const report = (await reportsResponse.json()).reports[0];
+
+  const bobBanned = waitForEvent(bob, 'app_error');
+  const banResponse = await fetch(`${url}/api/admin/reports/${report.id}`, {
+    method: 'PATCH',
+    headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      status: 'resolved',
+      moderationAction: 'permanent_ban',
+      moderationNote: 'Review required.',
+    }),
+  });
+  assert.equal(banResponse.status, 200);
+  assert.equal((await bobBanned).code, 'banned');
+
+  const submitted = await fetch(`${url}/api/appeals`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      clientId: bobId,
+      alias: 'Bob',
+      message: 'I believe this ban was applied in error and would like the case reviewed.',
+    }),
+  });
+  assert.equal(submitted.status, 201);
+  const submittedAppeal = (await submitted.json()).appeal;
+  assert.equal(submittedAppeal.status, 'pending');
+
+  const duplicate = await fetch(`${url}/api/appeals`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ clientId: bobId, message: 'A second request.' }),
+  });
+  assert.equal(duplicate.status, 409);
+
+  const pending = await fetch(`${url}/api/admin/appeals?status=pending`, { headers });
+  assert.equal(pending.status, 200);
+  const pendingAppeal = (await pending.json()).appeals[0];
+  assert.equal(pendingAppeal.id, submittedAppeal.id);
+  assert.equal(pendingAppeal.chatId, report.chatId);
+  assert.equal(pendingAppeal.report.id, report.id);
+  assert.equal(pendingAppeal.banSnapshot.permanent, true);
+
+  const approved = await fetch(`${url}/api/admin/appeals/${submittedAppeal.id}`, {
+    method: 'PATCH',
+    headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'approved', moderationNote: 'Evidence reviewed.' }),
+  });
+  assert.equal(approved.status, 200);
+  const approvedAppeal = (await approved.json()).appeal;
+  assert.equal(approvedAppeal.status, 'approved');
+  assert.equal(approvedAppeal.reviewedBy.username, 'env-admin');
+
+  const activeBans = await fetch(`${url}/api/admin/bans`, { headers });
+  assert.deepEqual((await activeBans.json()).bans, []);
+
+  const audit = await fetch(`${url}/api/admin/audit-log?limit=20`, { headers });
+  const events = (await audit.json()).events;
+  assert.ok(events.some((event) => event.type === 'appeal_submitted'));
+  const reviewEvent = events.find((event) => event.type === 'appeal_reviewed');
+  assert.equal(reviewEvent.appealId, submittedAppeal.id);
+  assert.equal(reviewEvent.appealStatus, 'approved');
+  assert.equal(reviewEvent.moderationAction, 'ban_lifted');
+
+  const bobReturning = await connectClient(t, url);
+  const queued = waitForEvent(bobReturning, 'queued');
+  login(bobReturning, { username: 'Bob', interests: 'books', clientId: bobId });
+  await queued;
+});
+
+test('rejecting a ban appeal keeps the active restriction in place', async (t) => {
+  const adminToken = 'test-admin-token-123';
+  const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'anon-chat-appeals-'));
+  const clientId = 'client-banned-123456';
+  await fs.writeFile(
+    path.join(dataDir, 'bans.json'),
+    `${JSON.stringify([
+      {
+        clientId,
+        permanent: true,
+        alias: 'Banned user',
+        reason: 'Repeated abuse',
+        action: 'permanent_ban',
+        appliedAt: new Date().toISOString(),
+        reportId: null,
+      },
+    ])}\n`,
+  );
+  const chat = createChatServer({
+    dataDir,
+    adminToken,
+    logger: { info() {}, error() {}, warn() {} },
+  });
+  await new Promise((resolve, reject) => {
+    chat.server.once('error', reject);
+    chat.server.listen(0, '127.0.0.1', resolve);
+  });
+  t.after(async () => {
+    await chat.close();
+    await fs.rm(dataDir, { recursive: true, force: true });
+  });
+  const url = `http://127.0.0.1:${chat.server.address().port}`;
+  const headers = { Authorization: `Bearer ${adminToken}` };
+
+  async function waitForBan() {
+    const deadline = Date.now() + 1_500;
+    while (Date.now() < deadline) {
+      const response = await fetch(`${url}/api/admin/bans`, { headers });
+      if ((await response.json()).bans.length === 1) return;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    throw new Error('Timed out waiting for the seeded ban to load.');
+  }
+  await waitForBan();
+
+  const submitted = await fetch(`${url}/api/appeals`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ clientId, message: 'Please reconsider this decision.' }),
+  });
+  assert.equal(submitted.status, 201);
+  const appeal = (await submitted.json()).appeal;
+
+  const rejected = await fetch(`${url}/api/admin/appeals/${appeal.id}`, {
+    method: 'PATCH',
+    headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'rejected', moderationNote: 'The evidence supports the ban.' }),
+  });
+  assert.equal(rejected.status, 200);
+  assert.equal((await rejected.json()).appeal.status, 'rejected');
+
+  const bans = await fetch(`${url}/api/admin/bans`, { headers });
+  assert.equal((await bans.json()).bans.length, 1);
+});
+
 test('creates, restores, and revokes cookie-based admin sessions', async (t) => {
   const adminToken = 'test-admin-token-123';
   const url = await createTestServer(t, { adminToken });

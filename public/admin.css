@@ -284,6 +284,10 @@ h2 {
   background: linear-gradient(90deg, var(--danger), rgba(239, 107, 103, 0));
 }
 
+.stat-card:nth-child(6)::before {
+  background: linear-gradient(90deg, #c79ae8, rgba(199, 154, 232, 0));
+}
+
 .stat-label,
 .stat-caption {
   display: block;
@@ -500,6 +504,76 @@ h2 {
 .ban-list {
   display: grid;
   gap: 10px;
+}
+
+.appeal-list {
+  display: grid;
+  gap: 13px;
+}
+
+.appeal-card {
+  padding: 21px;
+  border: 1px solid rgba(199, 154, 232, 0.3);
+  border-radius: 17px;
+  background: rgba(58, 38, 76, 0.2);
+  animation: card-in 420ms ease both;
+}
+
+.appeal-card.status-approved {
+  border-color: rgba(83, 183, 166, 0.35);
+  background: rgba(33, 89, 83, 0.16);
+}
+
+.appeal-card.status-rejected {
+  border-color: rgba(239, 107, 103, 0.32);
+  background: rgba(107, 30, 35, 0.16);
+}
+
+.appeal-ban-summary,
+.appeal-related,
+.appeal-review-meta,
+.appeal-review-note {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.appeal-message {
+  margin: 15px 0 0;
+  padding: 13px 14px;
+  border: 1px solid rgba(199, 154, 232, 0.22);
+  border-radius: 11px;
+  color: #f0e8f5;
+  background: rgba(45, 31, 57, 0.58);
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.appeal-review-note {
+  color: #d0dcd9;
+}
+
+.appeal-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  margin-top: 17px;
+  padding-top: 17px;
+  border-top: 1px solid rgba(190, 235, 220, 0.1);
+}
+
+.appeal-controls textarea {
+  min-height: 44px;
+  resize: vertical;
+}
+
+.appeal-decision-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .ban-card {
@@ -740,6 +814,24 @@ h2 {
   color: #b6ecdf;
   border-color: rgba(83, 183, 166, 0.3);
   background: rgba(83, 183, 166, 0.14);
+}
+
+.badge.pending {
+  color: #e5c8ff;
+  border-color: rgba(199, 154, 232, 0.35);
+  background: rgba(199, 154, 232, 0.14);
+}
+
+.badge.approved {
+  color: #b6ecdf;
+  border-color: rgba(83, 183, 166, 0.3);
+  background: rgba(83, 183, 166, 0.14);
+}
+
+.badge.rejected {
+  color: #ffc8c5;
+  border-color: rgba(239, 107, 103, 0.35);
+  background: rgba(239, 107, 103, 0.14);
 }
 
 .moderation-fields {
@@ -1019,6 +1111,19 @@ h2 {
 
   .moderator-card {
     grid-template-columns: 1fr;
+  }
+
+  .appeal-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .appeal-decision-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .appeal-decision-actions button {
+    width: 100%;
   }
 
   .ban-card .danger-button {

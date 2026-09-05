@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="robots" content="noindex, nofollow" />
     <title>GhostChat Moderation</title>
-    <link rel="stylesheet" href="admin.css?v=5" />
+    <link rel="stylesheet" href="admin.css?v=6" />
   </head>
   <body>
     <main class="admin-shell">
@@ -95,6 +95,18 @@
             tabindex="-1"
           >
             Reports
+          </button>
+          <button
+            id="tab-appeals"
+            class="admin-tab"
+            type="button"
+            role="tab"
+            aria-selected="false"
+            aria-controls="panel-appeals"
+            data-tab="appeals"
+            tabindex="-1"
+          >
+            Appeals
           </button>
           <button
             id="tab-resolved"
@@ -193,6 +205,11 @@
               <strong id="stat-active-bans">—</strong>
               <span class="stat-caption">Currently restricted clients</span>
             </article>
+            <article class="stat-card">
+              <span class="stat-label">Pending appeals</span>
+              <strong id="stat-pending-appeals">—</strong>
+              <span class="stat-caption">Waiting for a decision</span>
+            </article>
           </section>
         </section>
 
@@ -225,6 +242,38 @@
               </div>
             </div>
             <section id="reports" class="report-list" aria-live="polite"></section>
+          </section>
+        </section>
+
+        <section
+          id="panel-appeals"
+          class="tab-panel"
+          role="tabpanel"
+          aria-labelledby="tab-appeals"
+          data-tab-panel="appeals"
+          hidden
+        >
+          <section class="admin-section appeal-section" aria-labelledby="appeals-title">
+            <div class="section-heading">
+              <div>
+                <span class="section-kicker">Review queue</span>
+                <h2 id="appeals-title">Ban appeals</h2>
+                <p>
+                  Read the explanation, inspect the related case, then approve or reject the appeal.
+                </p>
+              </div>
+              <div class="section-tools" aria-label="Appeal controls">
+                <label for="appeal-status-filter">Status</label>
+                <select id="appeal-status-filter">
+                  <option value="pending">Pending</option>
+                  <option value="approved">Approved</option>
+                  <option value="rejected">Rejected</option>
+                  <option value="">All appeals</option>
+                </select>
+                <button id="refresh-appeals" type="button" class="secondary">Refresh</button>
+              </div>
+            </div>
+            <section id="appeals" class="appeal-list" aria-live="polite"></section>
           </section>
         </section>
 
@@ -383,6 +432,6 @@
       </div>
     </main>
 
-    <script src="admin.js?v=10"></script>
+    <script src="admin.js?v=11"></script>
   </body>
 </html>

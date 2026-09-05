@@ -22,6 +22,8 @@ This project is an anonymous chat service. A few design points worth knowing:
 
 - The app stores masked chat transcripts for the configured retention period;
   treat the data directory as sensitive.
+- Ban appeal explanations are also stored in `DATA_DIR/appeals.json` and may contain
+  sensitive information; protect and retain this file under the same policy as transcripts.
 - The `18+` confirmation is a self-attestation, not identity or age verification.
 - Blocking uses a browser-local random `clientId`; it is a user-safety feature,
   not an account-level ban.
@@ -37,6 +39,10 @@ This project is an anonymous chat service. A few design points worth knowing:
   also invalidates its existing sessions. Keep at least one active admin account.
 - Existing automation may still use `Authorization: Bearer <ADMIN_TOKEN>`; keep
   those requests server-to-server and never expose the header in browser code.
+- Public appeal submission is limited to an actively banned anonymous client, guarded by
+  same-origin checks and a per-IP daily limit. The anonymous `clientId` is not a durable identity,
+  so a visitor who clears browser storage can obtain a new ID; appeals do not replace account-level
+  identity or abuse controls.
 
 ## Supported versions
 

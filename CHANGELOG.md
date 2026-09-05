@@ -22,6 +22,8 @@ and the project follows [Semantic Versioning](https://semver.org/).
   expiration, login throttling, and same-origin checks for moderation changes.
 - Named moderator accounts with salted `scrypt` passwords, `admin`/`moderator`/`viewer` roles,
   immediate account revocation, team management, and actor-aware moderation audit events.
+- Ban appeals with a public submission form, durable appeal storage, report/transcript links,
+  and moderator approval or rejection actions that lift or preserve the ban.
 
 ### Changed
 

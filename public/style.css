@@ -215,6 +215,31 @@ body {
   text-decoration: underline;
 }
 
+.appeal-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  color: var(--text-secondary);
+}
+
+.appeal-link.available {
+  color: var(--accent);
+  font-weight: 650;
+}
+
+.appeal-feedback.success {
+  color: #86efac;
+}
+
+.appeal-hint {
+  margin: -4px 0 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 #login-form {
   display: flex;
   flex-direction: column;
@@ -831,6 +856,29 @@ body {
   border: 1px solid var(--glass-border);
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.04);
+}
+
+[data-theme='light'] .report-dialog {
+  color: #193033;
+  background: #fffaf3;
+  border-color: rgba(25, 48, 50, 0.18);
+  box-shadow: 0 25px 50px rgba(25, 48, 50, 0.2);
+}
+
+[data-theme='light'] .report-form select,
+[data-theme='light'] .report-form textarea {
+  color: #193033;
+  background: rgba(25, 48, 50, 0.055);
+  border-color: rgba(25, 48, 50, 0.18);
+}
+
+[data-theme='light'] .report-form select option {
+  color: #193033;
+  background: #fffaf3;
+}
+
+[data-theme='light'] .appeal-feedback.success {
+  color: #197044;
 }
 
 .blocked-item-name {
