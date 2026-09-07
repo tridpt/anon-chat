@@ -50,6 +50,8 @@ and the project follows [Semantic Versioning](https://semver.org/).
   persisted across restart.
 - A mobile responsive pass with keyboard-aware chat sizing, larger labelled safety actions,
   bottom-sheet dialogs, and a thumb-friendly admin console on narrow screens.
+- Network recovery feedback for chat: offline and reconnecting states, automatic Socket.IO retry,
+  and a safe return to the queue after a disconnected chat session.
 
 ### Changed
 

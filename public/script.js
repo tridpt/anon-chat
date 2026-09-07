@@ -76,6 +76,8 @@ const blockDialogTitle = document.getElementById('block-dialog-title');
 const blockDialogDescription = document.getElementById('block-dialog-description');
 const blockCancel = document.getElementById('block-cancel');
 const blockConfirmText = document.getElementById('block-confirm-text');
+const connectionBanner = document.getElementById('connection-banner');
+const connectionBannerText = document.getElementById('connection-banner-text');
 const feedbackDialog = document.getElementById('feedback-dialog');
 const feedbackForm = document.getElementById('feedback-form');
 const feedbackComment = document.getElementById('feedback-comment');
@@ -160,6 +162,7 @@ let unreadMessageCount = 0;
 let pendingBlock = null;
 let pendingFeedback = null;
 let feedbackSubmitting = false;
+let reconnectNeedsNewMatch = false;
 const defaultDocumentTitle = document.title;
 const clientId = getOrCreateClientId();
 const blockedPartners = getBlockedPartners();
@@ -427,6 +430,13 @@ function resetChatExperience() {
   if (label) label.innerText = t('block');
 }
 
+function setConnectionBanner(state, message = '') {
+  if (!connectionBanner || !connectionBannerText) return;
+  connectionBanner.dataset.state = state;
+  connectionBannerText.innerText = message;
+  connectionBanner.hidden = !message;
+}
+
 function queueChatFeedback({ chatId, partnerId, partnerName }) {
   if (!chatId || !partnerId || !partnerName || pendingFeedback) return;
   pendingFeedback = { chatId, partnerId, partnerName };
@@ -662,7 +672,7 @@ async function submitAppeal(event) {
   }
 }
 
-function joinQueue() {
+function joinQueue({ restored = false } = {}) {
   if (!hasActiveSession || !socket.connected || !safetyAcknowledged) return;
 
   socket.emit('login', {
@@ -673,26 +683,65 @@ function joinQueue() {
     clientId,
     blockedClientIds: [...blockedClientIds],
   });
-  setWaitingStatus(t('waiting_title'), t('waiting_detail'));
+  setWaitingStatus(
+    restored ? t('session_ended_title') : t('waiting_title'),
+    restored ? t('session_ended_detail') : t('waiting_detail'),
+  );
   showScreen('waiting-screen');
 }
 
-socket.on('connect', joinQueue);
+socket.on('connect', () => {
+  setConnectionBanner('connected', '');
+  const restored = reconnectNeedsNewMatch;
+  reconnectNeedsNewMatch = false;
+  joinQueue({ restored });
+});
+
+socket.io.on('reconnect_attempt', (attempt) => {
+  if (!hasActiveSession) return;
+  queueStatus.innerText = t('reconnect_attempt', { count: attempt });
+  setWaitingStatus(t('reconnecting_title'), t('reconnecting_detail'));
+  showScreen('waiting-screen');
+});
+
+socket.io.on('reconnect_error', () => {
+  if (!hasActiveSession) return;
+  setWaitingStatus(t('conn_problem_title'), t('conn_problem_detail'));
+});
+
+window.addEventListener('offline', () => {
+  if (!hasActiveSession) return;
+  setConnectionBanner('offline', t('offline_detail'));
+  if (!socket.connected) {
+    setWaitingStatus(t('reconnecting_title'), t('reconnecting_detail'));
+    showScreen('waiting-screen');
+  }
+});
+
+window.addEventListener('online', () => {
+  if (!hasActiveSession) return;
+  setConnectionBanner('reconnecting', t('reconnecting_detail'));
+  if (!socket.connected) socket.connect();
+});
 
 socket.on('connect_error', () => {
   if (!hasActiveSession) return;
   queueStatus.innerText = '';
+  setConnectionBanner('reconnecting', t('conn_problem_detail'));
   setWaitingStatus(t('conn_problem_title'), t('conn_problem_detail'));
   showScreen('waiting-screen');
 });
 
 socket.on('disconnect', () => {
+  const wasInChat = isInChat && Boolean(currentChatId);
   resetChatExperience();
   dismissChatFeedback();
   hideIcebreakers();
   clearSharedInterests();
+  setConnectionBanner('reconnecting', t('reconnecting_detail'));
   if (!hasActiveSession) return;
 
+  reconnectNeedsNewMatch = reconnectNeedsNewMatch || wasInChat;
   isInChat = false;
   currentPartnerId = null;
   currentPartnerName = '';
@@ -721,12 +770,14 @@ socket.on('app_error', (error) => {
   if (error?.code === 'banned') {
     hasActiveSession = false;
     isInChat = false;
+    reconnectNeedsNewMatch = false;
     dismissChatFeedback();
     currentPartnerId = null;
     currentPartnerName = '';
     reportBtn.disabled = true;
     blockBtn.disabled = true;
     socket.disconnect();
+    setConnectionBanner('connected', '');
     showLoginError(message);
     appealBanBtn.classList.add('available');
     showScreen('login-screen');
@@ -753,7 +804,9 @@ socket.on('app_error', (error) => {
   if (error?.code === 'invalid_login') {
     showLoginError(message);
     hasActiveSession = false;
+    reconnectNeedsNewMatch = false;
     socket.disconnect();
+    setConnectionBanner('connected', '');
     showScreen('login-screen');
     return;
   }
@@ -1112,6 +1165,7 @@ loginForm.addEventListener('submit', (e) => {
   saveSafetyAcknowledgement();
   hasActiveSession = true;
   isInChat = false;
+  reconnectNeedsNewMatch = false;
   clearLoginError();
   appealBanBtn.classList.remove('available');
   setWaitingStatus(t('connecting_title'), t('connecting_detail'));
@@ -1223,11 +1277,13 @@ const cancelWaitingBtn = document.getElementById('cancel-waiting-btn');
 cancelWaitingBtn.addEventListener('click', () => {
   hasActiveSession = false;
   isInChat = false;
+  reconnectNeedsNewMatch = false;
   currentPartnerId = null;
   currentPartnerName = '';
   resetChatExperience();
   dismissChatFeedback();
   socket.disconnect();
+  setConnectionBanner('connected', '');
   queueStatus.innerText = '';
   clearLoginError();
   showScreen('login-screen');

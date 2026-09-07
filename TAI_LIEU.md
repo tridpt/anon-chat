@@ -21,7 +21,7 @@ Mỗi khách truy cập được gán một `clientId` ngẫu nhiên lưu trong 
 | Nhóm       | Tính năng                                                                                                                                                                            |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Ghép cặp   | Ghép theo sở thích chung, ưu tiên ngôn ngữ tương thích (Việt/Anh/bất kỳ), ưu tiên mềm theo phản hồi, cooldown cặp không phù hợp có thể chỉnh trong Settings, fallback sau 5 giây chờ |
-| Trò chuyện | Nhắn tin thời gian thực, chỉ báo "đang gõ", âm thanh thông báo                                                                                                                       |
+| Trò chuyện | Nhắn tin thời gian thực, chỉ báo "đang gõ", âm thanh thông báo, tự kết nối lại sau mất mạng                                                                                          |
 | Gợi ý      | Câu mở lời (icebreaker) theo sở thích chung và ngôn ngữ                                                                                                                              |
 | Hàng đợi   | Hiển thị số người đang chờ, ước tính thời gian chờ, số người trực tuyến                                                                                                              |
 | Cảm xúc    | Emoji picker khi soạn tin; thả reaction emoji lên từng tin nhắn                                                                                                                      |
@@ -356,6 +356,7 @@ Các nhóm logic chính:
 - **Reactions** — picker nổi cạnh tin nhắn, gửi `reactMessage`, gom đếm và render chip qua sự kiện `message_reaction`.
 - **Thông báo** — xin quyền lúc login; `notify` chỉ bắn khi `document.hidden`. Khi người dùng không ở cuối khung chat, tin đến không kéo màn hình xuống mà tăng badge trên tab và hiện nút xem tin mới.
 - **Đang nhập** — client tự gửi `stop_typing` khi xóa hết nội dung/gửi tin/rời chat; server chỉ relay lúc bắt đầu trạng thái gõ và tự hết hạn sau 3 giây để chỉ báo không bị kẹt.
+- **Khôi phục kết nối** — Socket.IO tự thử lại khi mất mạng. Client hiển thị banner offline/reconnecting, giữ hồ sơ ẩn danh trong bộ nhớ, và gửi lại `login` sau khi nối lại. Vì room cũ không còn an toàn sau ngắt kết nối, người đang chat được thông báo kết thúc phiên và quay lại hàng đợi thay vì cố khôi phục room cũ.
 - **Chặn trong chat** — nút Chặn mở `#block-dialog`; chỉ sau sự kiện `partner_blocked` từ server thì client mới lưu người bị chặn vào localStorage.
 - **Vòng đời Socket.IO** — xử lý `connect`/`disconnect`/`connect_error`, các sự kiện server, gửi tin, gõ, skip, block, report.
 

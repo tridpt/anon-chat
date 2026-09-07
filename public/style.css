@@ -443,6 +443,49 @@ body {
   background: var(--surface-strong);
 }
 
+.connection-banner {
+  position: absolute;
+  z-index: 50;
+  top: 0;
+  right: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 30px;
+  color: #ffebd9;
+  background: rgba(142, 74, 37, 0.8);
+  border-bottom: 1px solid rgba(243, 160, 108, 0.32);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.connection-banner[hidden] {
+  display: none;
+}
+
+.connection-banner[data-state='offline'] {
+  color: #ffe5e2;
+  background: rgba(130, 46, 49, 0.84);
+  border-bottom-color: rgba(248, 113, 113, 0.36);
+}
+
+.connection-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: currentColor;
+  animation: connection-pulse 1.25s ease-in-out infinite;
+}
+
+@keyframes connection-pulse {
+  50% {
+    opacity: 0.35;
+    transform: scale(0.75);
+  }
+}
+
 .partner-info {
   display: flex;
   align-items: center;
@@ -1131,6 +1174,11 @@ body {
     grid-template-columns: minmax(0, 1fr);
     gap: 12px;
     padding: max(12px, env(safe-area-inset-top)) 14px 12px;
+  }
+
+  .connection-banner {
+    padding: 9px max(14px, env(safe-area-inset-right)) 9px max(14px, env(safe-area-inset-left));
+    font-size: 12px;
   }
 
   .partner-info {

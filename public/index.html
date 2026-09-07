@@ -44,6 +44,17 @@
       </button>
 
       <main class="chat-interface">
+        <div
+          id="connection-banner"
+          class="connection-banner"
+          role="status"
+          aria-live="polite"
+          hidden
+        >
+          <span class="connection-dot" aria-hidden="true"></span>
+          <span id="connection-banner-text"></span>
+        </div>
+
         <!-- LOGIN SCREEN -->
         <div id="login-screen" class="screen active">
           <div class="login-layout">

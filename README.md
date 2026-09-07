@@ -21,6 +21,7 @@ Anonymous, one-on-one chat with language-compatible matching. GhostChat does not
 - Use a phone-first chat layout with keyboard-aware sizing, thumb-sized Block/Report/Skip controls,
   bottom-sheet safety dialogs, and a compact responsive moderation console.
 - Show an expiring partner-typing indicator, preserve your reading position for new messages, and provide sound/browser notifications when the tab is hidden.
+- Recover gracefully from network drops: show offline/reconnecting status, retry automatically, and return a disconnected participant to the matching queue when connectivity resumes.
 - Ask for a post-chat rating (good fit, not a match, or unsafe) with an optional comment; unsafe feedback can report and block the partner after the chat ends.
 - Let people optionally explain a "not a match" rating with language, interests, conversation
   style, or another reason; moderators see the reason mix in the feedback dashboard.
