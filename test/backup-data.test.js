@@ -5,6 +5,12 @@ const test = require('node:test');
 const os = require('node:os');
 const path = require('node:path');
 const { backupData, resolveConfig } = require('../scripts/backup-data');
+const {
+  applyPendingRestore,
+  getPendingRestore,
+  listSnapshots,
+  writePendingRestore,
+} = require('../scripts/restore-data');
 const { createChatServer } = require('../index');
 
 async function sha256(file) {
@@ -93,6 +99,118 @@ test('rejects a backup directory inside the data directory', () => {
     () => resolveConfig({ dataDir: 'data', backupDir: path.join('data', 'backups') }),
     /must be separate directories/,
   );
+});
+
+test('verifies a queued backup and restores it only after making a safety snapshot', async (t) => {
+  const directories = await makeDirectories();
+  t.after(() => fs.rm(directories.root, { recursive: true, force: true }));
+  await fs.mkdir(directories.dataDir, { recursive: true });
+  await fs.writeFile(path.join(directories.dataDir, 'reports.json'), '[{"id":"before"}]\n');
+  const original = await backupData({
+    ...directories,
+    keep: 1,
+    now: new Date('2026-09-05T08:00:00.000Z'),
+  });
+  await fs.writeFile(path.join(directories.dataDir, 'reports.json'), '[{"id":"after"}]\n');
+  await fs.writeFile(path.join(directories.dataDir, 'new-data.json'), '[{"id":"only-current"}]\n');
+
+  const pending = await writePendingRestore({
+    ...directories,
+    snapshot: path.basename(original.path),
+  });
+  assert.equal(pending.snapshot, path.basename(original.path));
+  assert.equal((await getPendingRestore(directories)).snapshot, pending.snapshot);
+
+  const applied = await applyPendingRestore({ ...directories, keep: 1 });
+  assert.equal(applied.restored.snapshot, pending.snapshot);
+  assert.equal(
+    await fs.readFile(path.join(directories.dataDir, 'reports.json'), 'utf8'),
+    '[{"id":"before"}]\n',
+  );
+  assert.equal(await exists(path.join(directories.dataDir, 'new-data.json')), false);
+  assert.equal(await getPendingRestore(directories), null);
+  assert.equal(
+    await fs.readFile(path.join(applied.safetyBackup.path, 'reports.json'), 'utf8'),
+    '[{"id":"after"}]\n',
+  );
+});
+
+test('lists damaged snapshots but refuses to queue them for recovery', async (t) => {
+  const directories = await makeDirectories();
+  t.after(() => fs.rm(directories.root, { recursive: true, force: true }));
+  await fs.mkdir(directories.dataDir, { recursive: true });
+  await fs.writeFile(path.join(directories.dataDir, 'reports.json'), '[]\n');
+  const snapshot = await backupData({
+    ...directories,
+    now: new Date('2026-09-05T08:00:00.000Z'),
+  });
+  const name = path.basename(snapshot.path);
+  await fs.writeFile(path.join(snapshot.path, 'reports.json'), '["tampered"]\n');
+
+  const backups = await listSnapshots(directories);
+  assert.equal(backups.length, 1);
+  assert.equal(backups[0].snapshot, name);
+  assert.equal(backups[0].verified, false);
+  await assert.rejects(
+    () => writePendingRestore({ ...directories, snapshot: name }),
+    /metadata does not match|checksum failed/i,
+  );
+  assert.equal(await getPendingRestore(directories), null);
+});
+
+test('limits backup recovery scheduling to authenticated admins with an exact confirmation', async (t) => {
+  const directories = await makeDirectories();
+  let chat = null;
+  t.after(async () => {
+    if (chat) await chat.close();
+    await fs.rm(directories.root, { recursive: true, force: true });
+  });
+  await fs.mkdir(directories.dataDir, { recursive: true });
+  await fs.writeFile(path.join(directories.dataDir, 'reports.json'), '[]\n');
+  const snapshot = await backupData({
+    ...directories,
+    now: new Date('2026-09-05T08:00:00.000Z'),
+  });
+  const name = path.basename(snapshot.path);
+  chat = createChatServer({
+    dataDir: directories.dataDir,
+    backupDir: directories.backupDir,
+    adminToken: 'backup-admin-token',
+    logger: { info() {}, error() {}, warn() {} },
+  });
+  await new Promise((resolve, reject) => {
+    chat.server.once('error', reject);
+    chat.server.listen(0, '127.0.0.1', resolve);
+  });
+  const url = `http://127.0.0.1:${chat.server.address().port}`;
+  const headers = {
+    Authorization: 'Bearer backup-admin-token',
+    'Content-Type': 'application/json',
+  };
+
+  assert.equal((await fetch(`${url}/api/admin/backups`)).status, 401);
+  const listed = await fetch(`${url}/api/admin/backups`, { headers });
+  assert.equal(listed.status, 200);
+  assert.equal((await listed.json()).backups[0].verified, true);
+  const rejected = await fetch(`${url}/api/admin/backups/${name}/restore`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ confirmation: 'RESTORE something-else' }),
+  });
+  assert.equal(rejected.status, 400);
+  const queued = await fetch(`${url}/api/admin/backups/${name}/restore`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ confirmation: `RESTORE ${name}` }),
+  });
+  assert.equal(queued.status, 201);
+  assert.equal((await queued.json()).restartRequired, true);
+  const cancelled = await fetch(`${url}/api/admin/backups/${name}/restore`, {
+    method: 'DELETE',
+    headers,
+  });
+  assert.equal(cancelled.status, 200);
+  assert.equal(await getPendingRestore(directories), null);
 });
 
 test('creates scheduled backups when the server interval is enabled', async (t) => {

@@ -28,6 +28,14 @@ and the project follows [Semantic Versioning](https://semver.org/).
   automatic moderation-list refreshes.
 - A timestamped JSON backup utility (`npm run backup`) with SHA-256 manifests, configurable
   retention, scheduled startup/interval backups, and a direct Node staging profile.
+- An admin-only Backups tab that verifies snapshot checksums and JSON before showing a
+  preview, queues an explicitly confirmed recovery, and creates a safety backup before
+  applying the recovery on the next startup.
+- A smoother chat experience: expiring typing states, preserved scroll position with an
+  unread-message jump button/title badge, and an in-chat block confirmation that saves only
+  after server acknowledgement.
+- Post-chat ratings with optional comments, admin feedback totals, and a safe report-and-block
+  flow linked to the ended transcript.
 
 ### Changed
 

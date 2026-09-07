@@ -12,16 +12,17 @@ Anonymous, one-on-one chat with language-compatible matching. GhostChat does not
 - Offer localized icebreaker prompts after a match, based on shared interests when possible.
 - Show the live number of people waiting and a wait-time estimate based on recent matches.
 - Require self-attested 18+ and Community Rules acceptance before joining the queue.
-- Skip a chat, block a current partner, and manage or undo blocks in the browser.
+- Skip a chat, block a current partner from an in-chat confirmation dialog, and manage or undo blocks in the browser.
 - Insert emojis from a built-in picker and switch between dark and light themes (saved per browser).
-- React to individual messages with emoji, and get a browser notification on a match or new message when the tab is hidden.
+- Show an expiring partner-typing indicator, preserve your reading position for new messages, and provide sound/browser notifications when the tab is hidden.
+- Ask for a post-chat rating (good fit, not a match, or unsafe) with an optional comment; unsafe feedback can report and block the partner after the chat ends.
 - Switch the interface language between English and Vietnamese; the choice is detected from the browser and saved per browser.
 - Report a current partner with a reason, then review and resolve reports in `/admin`.
 - Keep resolved reports in a separate archive and apply moderator actions such as a 24-hour chat block or permanent ban.
 - Let banned visitors submit one explanation for moderator review; approvals lift the active ban and rejections keep it in place.
-- Store masked chat transcripts for admin review, with search, date filters, pagination, JSON/CSV export, deletion, and configurable automatic retention.
-- Create timestamped, checksum-verified JSON backups of moderation data with configurable retention.
-- Organize the moderation dashboard into separate Overview, Reports, Appeals, Resolved, Bans, Activity, and Chats tabs.
+- Store masked chat transcripts and post-chat feedback for admin review, with search, date filters, pagination, JSON/CSV export, deletion, and configurable automatic retention.
+- Create timestamped, checksum-verified JSON backups of moderation data with configurable retention and safe recovery.
+- Organize the moderation dashboard into separate Overview, Reports, Appeals, Resolved, Bans, Activity, Team, Backups, and Chats tabs.
 - Stream new report and appeal notifications to signed-in moderators, with tab badges and automatic refreshes.
 - Protect browser admin access with short-lived, HttpOnly sessions, same-origin mutation checks, login throttling, and named moderator roles.
 - Mask basic profanity, limit links per message, and auto-suspend clients that pass a report threshold.
@@ -99,6 +100,25 @@ and copy them to separate or off-site storage. Backups are not encrypted by the 
 to keep every snapshot, or use `--keep <number>` for a one-off retention override. Set
 `BACKUP_INTERVAL_HOURS=24` to create one snapshot at startup and repeat it every 24 hours while the server runs.
 
+### Restore a backup safely
+
+Only a named `admin` can access the **Backups** tab. It verifies every file's size, SHA-256 checksum, and JSON
+format before showing a snapshot as recoverable; an invalid snapshot is visible but cannot be selected. Expand a
+verified snapshot to inspect the included files, type the exact `RESTORE <snapshot-name>` confirmation, then queue
+the recovery. The app does not replace live data while it is running.
+
+Stop and restart the app to apply the queued recovery. At startup, GhostChat verifies the snapshot again, creates a
+new safety backup of the current `DATA_DIR`, then replaces the stored JSON files from staged copies. If a file
+replacement fails, it rolls the previous files back. If startup is managed separately, stop the app first and run:
+
+```bash
+npm run restore:pending
+```
+
+The pending recovery is cancelled from the Backups tab before restart. A failed verification leaves current data
+untouched and keeps the pending request for investigation. Restoring reverts moderator accounts, reports, bans,
+appeals, transcripts, and audit history to the selected snapshot, so treat it as an emergency operation.
+
 ## Safety behaviour and limitations
 
 Blocks use an anonymous random ID stored only in the visitor's browser. The blocked ID is sent to the server only to avoid matching that browser with the same person again. Clearing browser data creates a new ID, so this is a user-safety feature, not an account-level ban system.
@@ -106,6 +126,7 @@ Blocks use an anonymous random ID stored only in the visitor's browser. The bloc
 The 18+ confirmation is a self-attestation, not identity or age verification. It is intended to set a clear entry rule and cannot prevent a determined visitor from bypassing it.
 
 Reports are validated, stored in `DATA_DIR/reports.json`, and also written as structured `REPORT {...}` server logs. Each new report includes the matching `chatId`, so moderators can open its transcript directly from the report card. Once resolved, a report moves to `DATA_DIR/resolved-reports.json` and appears in the separate admin archive. Moderators can optionally block the reported anonymous client for 24 hours or permanently revoke its access; active restrictions are listed in the admin Ban monitor and can be lifted there. A banned visitor can use the **Appeal a ban** link on the login screen to submit an explanation; appeals are stored in `DATA_DIR/appeals.json`, shown in the Appeals tab, and linked back to the originating report and transcript. Approving an appeal lifts the active restriction, while rejecting it leaves the ban in place. Every report review, appeal submission/review, automatic suspension, lifted ban, transcript deletion, and moderator-account change is recorded in `DATA_DIR/moderation-log.json` with the acting account identity. Because GhostChat has no public accounts, enforcement uses the browser's anonymous client ID. Chat transcripts are stored in `DATA_DIR/chats.json` and can be searched, paginated, exported, or deleted through the admin dashboard and admin-only `/api/admin/chats`, `/api/admin/chats/export`, and `/api/admin/chats/:id` endpoints. Completed transcripts are pruned after `CHAT_RETENTION_DAYS`; active chats remain until they end. Named moderator credentials are stored as salted `scrypt` hashes in `DATA_DIR/moderators.json`; this file is sensitive and must be backed up with the rest of the data directory. Establish a moderation process, publish a clear retention/privacy policy, and protect both `ADMIN_TOKEN` and the data directory because stored messages can contain sensitive personal information.
+Users can rate a completed chat once as positive, not a match, or unsafe, with an optional comment. Ratings are stored inside the transcript, summarized on the admin Overview and Chats tabs, and unsafe feedback can create a linked report and browser-level block after the chat ends.
 
 Profanity masking covers a basic built-in word list. Extend it at runtime without editing code by setting `PROFANITY_EXTRA` (comma-separated words) and/or `PROFANITY_FILE` (a JSON array of words); both are additive to the defaults. Auto-suspension is a lightweight safeguard: when an anonymous client is reported enough times within the configured window, it is temporarily blocked from matching. Active bans are persisted to `DATA_DIR/bans.json` (atomic write) and reloaded on startup, so they survive restarts and redeploys. Expired bans are pruned automatically. This is not a substitute for human moderation.
 

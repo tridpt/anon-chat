@@ -595,6 +595,46 @@ body {
   border-radius: 10px;
 }
 
+.new-messages-btn {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: -4px auto 10px;
+  padding: 8px 13px;
+  color: #fff4ea;
+  border: 1px solid rgba(243, 160, 108, 0.58);
+  border-radius: 999px;
+  background: rgba(139, 71, 37, 0.86);
+  box-shadow: 0 8px 18px rgba(11, 25, 27, 0.28);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+  animation: new-message-in 180ms ease both;
+}
+
+.new-messages-btn:hover {
+  background: var(--accent-hover);
+  transform: translateY(-1px);
+}
+
+.new-messages-btn[hidden],
+.typing-indicator[hidden] {
+  display: none;
+}
+
+@keyframes new-message-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 /* Icebreakers */
 .icebreaker-panel {
   margin: 16px 30px 0;
@@ -727,12 +767,17 @@ body {
 
 /* Typing Indicator */
 .typing-indicator {
+  align-self: flex-start;
   padding: 0 30px 10px 30px;
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: 13px;
   color: var(--text-secondary);
+}
+
+.typing-text {
+  font-weight: 550;
 }
 
 .typing-dots {
@@ -838,6 +883,53 @@ body {
   justify-content: flex-end;
   gap: 10px;
   margin-top: 6px;
+}
+
+.feedback-dialog {
+  width: min(92vw, 520px);
+}
+
+.feedback-options {
+  display: grid;
+  gap: 9px;
+}
+
+.feedback-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  color: var(--text-primary) !important;
+  border: 1px solid var(--glass-border);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+  transition:
+    border-color 0.18s ease,
+    background 0.18s ease;
+}
+
+.feedback-option:hover,
+.feedback-option:has(input:checked) {
+  border-color: var(--accent);
+  background: rgba(243, 160, 108, 0.12);
+}
+
+.feedback-option input {
+  accent-color: var(--accent);
+}
+
+.feedback-unsafe-actions {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid rgba(239, 68, 68, 0.28);
+  border-radius: 11px;
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.feedback-unsafe-actions p {
+  margin: 0;
 }
 
 .blocked-list {
@@ -1156,6 +1248,11 @@ body {
   .emoji-btn {
     width: 46px;
     flex: 0 0 46px;
+  }
+
+  .new-messages-btn {
+    max-width: calc(100% - 32px);
+    margin-bottom: 8px;
   }
 }
 

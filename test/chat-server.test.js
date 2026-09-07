@@ -287,6 +287,114 @@ test('rate limits rapid message bursts', async (t) => {
   });
 });
 
+test('relays typing only once per active typing state and clears it after a message', async (t) => {
+  const url = await createTestServer(t);
+  const alice = await connectClient(t, url);
+  const bob = await connectClient(t, url);
+
+  const aliceMatched = waitForEvent(alice, 'matched');
+  const bobMatched = waitForEvent(bob, 'matched');
+  login(alice, { username: 'Alice', interests: 'books' });
+  login(bob, { username: 'Bob', interests: 'books' });
+  await Promise.all([aliceMatched, bobMatched]);
+
+  let typingEvents = 0;
+  bob.on('typing', () => {
+    typingEvents += 1;
+  });
+  const stoppedTyping = waitForEvent(bob, 'stop_typing');
+  alice.emit('typing');
+  alice.emit('typing');
+  alice.emit('typing');
+  const received = waitForEvent(bob, 'message');
+  alice.emit('chatMessage', 'Typing is finished.');
+
+  await Promise.all([stoppedTyping, received]);
+  assert.equal(typingEvents, 1);
+});
+
+test('stores one post-chat rating and exposes feedback totals to admins', async (t) => {
+  const adminToken = 'test-admin-token-123';
+  const url = await createTestServer(t, { adminToken });
+  const alice = await connectClient(t, url);
+  const bob = await connectClient(t, url);
+  const aliceMatched = waitForEvent(alice, 'matched');
+  const bobMatched = waitForEvent(bob, 'matched');
+  login(alice, { username: 'Alice', interests: 'books', clientId: 'client-alice-12345' });
+  login(bob, { username: 'Bob', interests: 'books', clientId: 'client-bob-123456' });
+  const [match] = await Promise.all([aliceMatched, bobMatched]);
+  assert.match(match.chatId, /^[0-9a-f-]{36}$/i);
+
+  const activeChatError = waitForEvent(alice, 'app_error');
+  alice.emit('rateChat', { chatId: match.chatId, rating: 'positive' });
+  assert.equal((await activeChatError).code, 'invalid_feedback');
+
+  const partnerLeft = waitForEvent(bob, 'partner_left');
+  alice.emit('skip');
+  await partnerLeft;
+
+  const received = waitForEvent(alice, 'chat_rating_received');
+  alice.emit('rateChat', {
+    chatId: match.chatId,
+    rating: 'positive',
+    comment: 'Friendly conversation.',
+  });
+  await received;
+
+  const duplicate = waitForEvent(alice, 'app_error');
+  alice.emit('rateChat', { chatId: match.chatId, rating: 'unsafe' });
+  assert.equal((await duplicate).code, 'invalid_feedback');
+
+  assert.equal((await fetch(`${url}/api/admin/chat-feedback`)).status, 401);
+  const response = await fetch(`${url}/api/admin/chat-feedback`, {
+    headers: { Authorization: `Bearer ${adminToken}` },
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).summary, {
+    total: 1,
+    positive: 1,
+    not_a_match: 0,
+    unsafe: 0,
+    chatsWithUnsafe: 0,
+  });
+});
+
+test('allows reporting and blocking a partner from the post-chat feedback flow', async (t) => {
+  const adminToken = 'test-admin-token-123';
+  const url = await createTestServer(t, { adminToken });
+  const alice = await connectClient(t, url);
+  const bob = await connectClient(t, url);
+  const aliceMatched = waitForEvent(alice, 'matched');
+  const bobMatched = waitForEvent(bob, 'matched');
+  login(alice, { username: 'Alice', interests: 'books', clientId: 'client-alice-12345' });
+  login(bob, { username: 'Bob', interests: 'books', clientId: 'client-bob-123456' });
+  const [match] = await Promise.all([aliceMatched, bobMatched]);
+  const partnerLeft = waitForEvent(bob, 'partner_left');
+  alice.emit('skip');
+  await partnerLeft;
+
+  const reportReceived = waitForEvent(alice, 'chat_report_received');
+  alice.emit('reportChat', {
+    chatId: match.chatId,
+    reason: 'Safety concern after chat: unwanted messages.',
+  });
+  await reportReceived;
+  const blocked = waitForEvent(alice, 'chat_partner_blocked');
+  alice.emit('blockChatPartner', { chatId: match.chatId });
+  assert.deepEqual(await blocked, {
+    chatId: match.chatId,
+    partnerId: 'client-bob-123456',
+    partnerName: 'Bob',
+  });
+
+  const reports = await fetch(`${url}/api/admin/reports`, {
+    headers: { Authorization: `Bearer ${adminToken}` },
+  });
+  const report = (await reports.json()).reports[0];
+  assert.equal(report.chatId, match.chatId);
+  assert.equal(report.reason, 'Safety concern after chat: unwanted messages.');
+});
+
 test('does not rematch a client with a blocked partner', async (t) => {
   const url = await createTestServer(t);
   const alice = await connectClient(t, url);

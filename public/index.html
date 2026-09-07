@@ -246,8 +246,19 @@
             <!-- Messages will be injected here -->
           </div>
 
-          <div id="typing-indicator" class="typing-indicator" style="display: none">
-            <span class="typing-text">Partner is typing</span>
+          <button id="new-messages-btn" class="new-messages-btn" type="button" hidden>
+            <i class="fa-solid fa-arrow-down" aria-hidden="true"></i>
+            <span id="new-messages-text">New messages</span>
+          </button>
+
+          <div
+            id="typing-indicator"
+            class="typing-indicator"
+            role="status"
+            aria-live="polite"
+            hidden
+          >
+            <span id="typing-text" class="typing-text">Partner is typing</span>
             <div class="typing-dots"><span>.</span><span>.</span><span>.</span></div>
           </div>
 
@@ -285,6 +296,105 @@
             </button>
           </form>
         </div>
+
+        <dialog
+          id="block-dialog"
+          class="report-dialog block-dialog"
+          aria-labelledby="block-dialog-title"
+        >
+          <form id="block-form" class="report-form">
+            <h2 id="block-dialog-title">Block this person?</h2>
+            <p id="block-dialog-description">
+              This ends the chat and prevents this browser from matching with them again.
+            </p>
+            <div class="dialog-actions">
+              <button id="block-cancel" type="button" class="btn-secondary" data-i18n="cancel">
+                Cancel
+              </button>
+              <button id="block-confirm" type="submit" class="btn-danger">
+                <i class="fa-solid fa-ban" aria-hidden="true"></i>
+                <span id="block-confirm-text">Block and find someone else</span>
+              </button>
+            </div>
+          </form>
+        </dialog>
+
+        <dialog
+          id="feedback-dialog"
+          class="report-dialog feedback-dialog"
+          aria-labelledby="feedback-title"
+        >
+          <form id="feedback-form" class="report-form">
+            <h2 id="feedback-title" data-i18n="feedback_title">How was that chat?</h2>
+            <p data-i18n="feedback_desc">
+              A quick rating helps us make GhostChat safer and better.
+            </p>
+            <div class="feedback-options" role="radiogroup" aria-label="Chat rating">
+              <label class="feedback-option positive">
+                <input type="radio" name="chat-rating" value="positive" required />
+                <span
+                  ><i class="fa-solid fa-thumbs-up" aria-hidden="true"></i>
+                  <span data-i18n="feedback_positive">It was good</span></span
+                >
+              </label>
+              <label class="feedback-option neutral">
+                <input type="radio" name="chat-rating" value="not_a_match" />
+                <span
+                  ><i class="fa-solid fa-arrow-right-arrow-left" aria-hidden="true"></i>
+                  <span data-i18n="feedback_not_a_match">Not a good fit</span></span
+                >
+              </label>
+              <label class="feedback-option unsafe">
+                <input type="radio" name="chat-rating" value="unsafe" />
+                <span
+                  ><i class="fa-solid fa-shield-heart" aria-hidden="true"></i>
+                  <span data-i18n="feedback_unsafe">I felt unsafe</span></span
+                >
+              </label>
+            </div>
+            <div id="feedback-unsafe-actions" class="feedback-unsafe-actions" hidden>
+              <p data-i18n="feedback_unsafe_hint">
+                You can report this person and block them to avoid matching again.
+              </p>
+              <button
+                id="feedback-report-block"
+                type="button"
+                class="btn-danger"
+                data-i18n="feedback_report_and_block"
+              >
+                Report and block
+              </button>
+            </div>
+            <label for="feedback-comment" data-i18n="feedback_comment_label"
+              >Tell us more (optional)</label
+            >
+            <textarea
+              id="feedback-comment"
+              maxlength="500"
+              data-i18n-placeholder="feedback_comment_placeholder"
+              placeholder="What happened? This helps us improve."
+            ></textarea>
+            <p id="feedback-error" class="form-error" role="status" aria-live="polite" hidden></p>
+            <div class="dialog-actions">
+              <button
+                id="feedback-skip"
+                type="button"
+                class="btn-secondary"
+                data-i18n="feedback_skip"
+              >
+                Skip for now
+              </button>
+              <button
+                id="feedback-submit"
+                type="submit"
+                class="btn-primary"
+                data-i18n="feedback_send"
+              >
+                Send feedback
+              </button>
+            </div>
+          </form>
+        </dialog>
 
         <dialog id="report-dialog" class="report-dialog" aria-labelledby="report-title">
           <form id="report-form" class="report-form">

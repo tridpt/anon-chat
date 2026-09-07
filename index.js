@@ -6,6 +6,14 @@ const crypto = require('crypto');
 const fs = require('fs/promises');
 const { readFileSync } = require('fs');
 const { backupData } = require('./scripts/backup-data');
+const {
+  RestoreError,
+  applyPendingRestore,
+  cancelPendingRestore,
+  getPendingRestore,
+  listSnapshots,
+  writePendingRestore,
+} = require('./scripts/restore-data');
 
 function loadLocalEnv() {
   const envFile = path.join(__dirname, '.env');
@@ -45,6 +53,7 @@ const LIMITS = {
   maxInterests: 10,
   maxMessageLength: 500,
   maxReportReasonLength: 300,
+  maxChatFeedbackCommentLength: 500,
   maxBlockedClientIds: 100,
   maxQueueSize: 1000,
   fallbackMatchMs: 5_000,
@@ -155,6 +164,7 @@ function countLinks(text) {
 const REPORT_STATUSES = new Set(['new', 'reviewed', 'resolved']);
 const APPEAL_STATUSES = new Set(['pending', 'approved', 'rejected']);
 const MODERATION_ACTIONS = new Set(['none', 'chat_block', 'permanent_ban']);
+const CHAT_FEEDBACK_RATINGS = new Set(['positive', 'not_a_match', 'unsafe']);
 const MODERATOR_ROLES = new Set(['admin', 'moderator', 'viewer']);
 const CHAT_BLOCK_DURATION_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_ADMIN_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
@@ -162,6 +172,7 @@ const ADMIN_SESSION_COOKIE = 'ghostchat_admin_session';
 const ADMIN_SESSION_COOKIE_PATH = '/api/admin';
 const ADMIN_EVENT_HEARTBEAT_MS = 25_000;
 const HOUR_MS = 60 * 60 * 1000;
+const TYPING_IDLE_MS = 3_000;
 const MIN_MODERATOR_PASSWORD_LENGTH = 12;
 const MAX_MODERATOR_PASSWORD_LENGTH = 128;
 const RESERVED_MODERATOR_USERNAMES = new Set(['env-admin', 'system']);
@@ -330,6 +341,44 @@ function parseReport(data) {
   }
 
   return { value: reason };
+}
+
+function isChatId(value) {
+  return typeof value === 'string' && /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(value);
+}
+
+function parseChatFeedback(data) {
+  if (!isPlainObject(data) || !isChatId(data.chatId) || !CHAT_FEEDBACK_RATINGS.has(data.rating)) {
+    return { error: 'Choose a valid chat rating.' };
+  }
+  if (typeof data.comment !== 'undefined' && typeof data.comment !== 'string') {
+    return { error: 'Feedback comments must be text.' };
+  }
+  if (
+    typeof data.comment === 'string' &&
+    data.comment.length > LIMITS.maxChatFeedbackCommentLength
+  ) {
+    return {
+      error: `Feedback comments can be at most ${LIMITS.maxChatFeedbackCommentLength} characters.`,
+    };
+  }
+  return {
+    value: {
+      chatId: data.chatId,
+      rating: data.rating,
+      comment: typeof data.comment === 'string' ? cleanText(data.comment) : '',
+    },
+  };
+}
+
+function parsePostChatReport(data) {
+  if (!isPlainObject(data) || !isChatId(data.chatId)) {
+    return { error: 'Choose a valid chat to report.' };
+  }
+
+  const parsedReason = parseReport(data);
+  if (parsedReason.error) return parsedReason;
+  return { value: { chatId: data.chatId, reason: parsedReason.value } };
 }
 
 function parseAppeal(data) {
@@ -792,6 +841,31 @@ function createChatStore(dataDirectory, retentionDays = 30) {
     });
   }
 
+  function normalizeFeedback(feedback) {
+    if (!isPlainObject(feedback)) return null;
+    if (!isClientId(feedback.clientId) || !CHAT_FEEDBACK_RATINGS.has(feedback.rating)) return null;
+    if (typeof feedback.createdAt !== 'string' || Number.isNaN(Date.parse(feedback.createdAt))) {
+      return null;
+    }
+    return {
+      clientId: feedback.clientId,
+      rating: feedback.rating,
+      comment: typeof feedback.comment === 'string' ? feedback.comment : '',
+      createdAt: feedback.createdAt,
+    };
+  }
+
+  function feedbackSummary(chat) {
+    const feedback = Array.isArray(chat.feedback)
+      ? chat.feedback.map(normalizeFeedback).filter(Boolean)
+      : [];
+    const summary = { total: feedback.length, positive: 0, not_a_match: 0, unsafe: 0 };
+    feedback.forEach((entry) => {
+      summary[entry.rating] += 1;
+    });
+    return { feedback, summary };
+  }
+
   async function initialize() {
     if (initialized) return;
 
@@ -820,7 +894,13 @@ function createChatStore(dataDirectory, retentionDays = 30) {
       enqueue(async () => {
         await initialize();
         if (chats.some((item) => item.id === chat.id)) return;
-        chats.unshift({ ...chat, messages: [], endedAt: null, lastActivityAt: chat.startedAt });
+        chats.unshift({
+          ...chat,
+          messages: [],
+          feedback: [],
+          endedAt: null,
+          lastActivityAt: chat.startedAt,
+        });
         pruneExpired();
         await persist();
       }),
@@ -843,6 +923,35 @@ function createChatStore(dataDirectory, retentionDays = 30) {
         pruneExpired();
         await persist();
       }),
+    addFeedback: (roomId, feedback) =>
+      enqueue(async () => {
+        await initialize();
+        const chat = chats.find((item) => item.id === roomId);
+        if (!chat) return { error: 'not_found' };
+        if (!chat.endedAt) return { error: 'chat_active' };
+        const participantIds = new Set(
+          (chat.participants ?? []).map((participant) => participant.clientId),
+        );
+        if (!participantIds.has(feedback.clientId)) return { error: 'not_participant' };
+        const current = feedbackSummary(chat).feedback;
+        if (current.some((entry) => entry.clientId === feedback.clientId)) {
+          return { error: 'already_submitted' };
+        }
+        chat.feedback = [
+          ...current,
+          {
+            clientId: feedback.clientId,
+            rating: feedback.rating,
+            comment: feedback.comment,
+            createdAt: feedback.createdAt,
+          },
+        ];
+        await persist();
+        return {
+          feedback: copyValue(chat.feedback.at(-1)),
+          summary: feedbackSummary(chat).summary,
+        };
+      }),
     list: (limit = 50, { query = '', from = null, to = null } = {}, offset = 0) =>
       enqueue(async () => {
         await initialize();
@@ -864,6 +973,7 @@ function createChatStore(dataDirectory, retentionDays = 30) {
               message.clientId,
               message.text,
             ]),
+            ...(chat.feedback ?? []).map((feedback) => feedback.comment),
           ]
             .filter(Boolean)
             .join(' ')
@@ -871,14 +981,41 @@ function createChatStore(dataDirectory, retentionDays = 30) {
           return searchable.includes(normalizedQuery);
         });
         return {
-          chats: copyValue(matchingChats.slice(offset, offset + limit)),
+          chats: copyValue(
+            matchingChats.slice(offset, offset + limit).map((chat) => ({
+              ...chat,
+              feedback: feedbackSummary(chat).feedback,
+              feedbackSummary: feedbackSummary(chat).summary,
+            })),
+          ),
           total: matchingChats.length,
         };
       }),
     get: (id) =>
       enqueue(async () => {
         await initialize();
-        return copyValue(chats.find((chat) => chat.id === id) || null);
+        const chat = chats.find((item) => item.id === id);
+        return chat
+          ? copyValue({
+              ...chat,
+              feedback: feedbackSummary(chat).feedback,
+              feedbackSummary: feedbackSummary(chat).summary,
+            })
+          : null;
+      }),
+    getFeedbackSummary: () =>
+      enqueue(async () => {
+        await initialize();
+        const summary = { total: 0, positive: 0, not_a_match: 0, unsafe: 0, chatsWithUnsafe: 0 };
+        chats.forEach((chat) => {
+          const chatSummary = feedbackSummary(chat).summary;
+          summary.total += chatSummary.total;
+          summary.positive += chatSummary.positive;
+          summary.not_a_match += chatSummary.not_a_match;
+          summary.unsafe += chatSummary.unsafe;
+          if (chatSummary.unsafe > 0) summary.chatsWithUnsafe += 1;
+        });
+        return summary;
       }),
     remove: (id) =>
       enqueue(async () => {
@@ -1514,6 +1651,48 @@ function createChatServer({
     }
   }
 
+  async function appendReport({ chatId, reporter, reportedUser, reason }) {
+    const report = await reportStore.append({
+      id: crypto.randomUUID(),
+      createdAt: new Date().toISOString(),
+      chatId,
+      reporter,
+      reportedUser,
+      reason,
+      status: 'new',
+      moderationNote: '',
+      moderationAction: 'none',
+      actionAppliedAt: null,
+      reviewedAt: null,
+    });
+    logReport(report);
+    broadcastModerationUpdate('reports', 'created');
+
+    if (
+      await registerReportAgainst(reportedUser.clientId, {
+        alias: reportedUser.alias,
+        reportId: report.id,
+      })
+    ) {
+      log(`Auto-banned client after reaching the report threshold.`);
+      removeBannedClient(reportedUser.clientId);
+      broadcastQueueStatus();
+    }
+    return report;
+  }
+
+  async function getChatPartner(chatId, clientId) {
+    const chat = await chatStore.get(chatId);
+    if (!chat?.endedAt || !Array.isArray(chat.participants)) return null;
+    const reporter = chat.participants.find((participant) => participant.clientId === clientId);
+    const reportedUser = chat.participants.find((participant) => participant.clientId !== clientId);
+    if (!reporter || !reportedUser) return null;
+    return {
+      reporter: { alias: reporter.alias, clientId: reporter.clientId },
+      reportedUser: { alias: reportedUser.alias, clientId: reportedUser.clientId },
+    };
+  }
+
   function sendError(socket, code, message) {
     if (socket.connected) {
       socket.emit('app_error', { code, message });
@@ -1836,6 +2015,82 @@ function createChatServer({
       role: request.admin.role,
     });
   });
+
+  app.get('/api/admin/backups', requireAdmin, requireAdminRole, async (request, response) => {
+    try {
+      const [backups, pendingRestore] = await Promise.all([
+        listSnapshots({ dataDir, backupDir, keep: backupRetention }),
+        getPendingRestore({ dataDir, backupDir, keep: backupRetention }),
+      ]);
+      response.json({ backups, pendingRestore });
+    } catch (error) {
+      logError(error);
+      response.status(500).json({ error: 'Could not inspect data backups.' });
+    }
+  });
+
+  app.post(
+    '/api/admin/backups/:snapshot/restore',
+    requireAdmin,
+    requireAdminRole,
+    async (request, response) => {
+      const snapshot = request.params.snapshot;
+      const confirmation = request.body?.confirmation;
+      if (confirmation !== `RESTORE ${snapshot}`) {
+        response.status(400).json({
+          error: `Type RESTORE ${snapshot} to schedule this recovery.`,
+        });
+        return;
+      }
+      try {
+        const pendingRestore = await writePendingRestore({
+          dataDir,
+          backupDir,
+          keep: backupRetention,
+          snapshot,
+          requestedBy: request.admin.username,
+        });
+        response.status(201).json({ pendingRestore, restartRequired: true });
+      } catch (error) {
+        if (error instanceof RestoreError) {
+          response.status(error.code === 'restore_already_pending' ? 409 : 400).json({
+            error: error.message,
+          });
+          return;
+        }
+        logError(error);
+        response.status(500).json({ error: 'Could not schedule the backup recovery.' });
+      }
+    },
+  );
+
+  app.delete(
+    '/api/admin/backups/:snapshot/restore',
+    requireAdmin,
+    requireAdminRole,
+    async (request, response) => {
+      try {
+        const pendingRestore = await cancelPendingRestore({
+          dataDir,
+          backupDir,
+          keep: backupRetention,
+          snapshot: request.params.snapshot,
+        });
+        if (!pendingRestore) {
+          response.status(404).json({ error: 'There is no pending backup recovery.' });
+          return;
+        }
+        response.json({ pendingRestore });
+      } catch (error) {
+        if (error instanceof RestoreError) {
+          response.status(409).json({ error: error.message });
+          return;
+        }
+        logError(error);
+        response.status(500).json({ error: 'Could not cancel the backup recovery.' });
+      }
+    },
+  );
 
   app.post('/api/appeals', async (request, response) => {
     response.set('Cache-Control', 'no-store');
@@ -2372,6 +2627,14 @@ function createChatServer({
       response.status(500).json({ error: 'Could not load moderation log.' });
     }
   });
+  app.get('/api/admin/chat-feedback', requireAdmin, async (request, response) => {
+    try {
+      response.json({ summary: await chatStore.getFeedbackSummary() });
+    } catch (error) {
+      logError(error);
+      response.status(500).json({ error: 'Could not load chat feedback.' });
+    }
+  });
   app.delete(
     '/api/admin/bans/:clientId',
     requireAdmin,
@@ -2784,6 +3047,7 @@ function createChatServer({
         user2.interests.includes(interest),
       );
       user1.emit('matched', {
+        chatId: roomId,
         partnerName: user2.username,
         partnerColor: user2.color,
         partnerId: user2.clientId,
@@ -2791,6 +3055,7 @@ function createChatServer({
         sharedInterests,
       });
       user2.emit('matched', {
+        chatId: roomId,
         partnerName: user1.username,
         partnerColor: user1.color,
         partnerId: user1.clientId,
@@ -2807,6 +3072,32 @@ function createChatServer({
     return queueChanged;
   }
 
+  function stopSocketTyping(socket, { notify = true } = {}) {
+    if (socket.typingTimer) {
+      clearTimeout(socket.typingTimer);
+      socket.typingTimer = null;
+    }
+    if (!socket.isTyping) return;
+
+    socket.isTyping = false;
+    if (notify && socket.currentRoom && !socket.disconnected) {
+      socket.to(socket.currentRoom).emit('stop_typing');
+    }
+  }
+
+  function startSocketTyping(socket) {
+    if (!socket.currentRoom) return;
+    if (!socket.isTyping) {
+      if (isRateLimited(socket, 'typing', LIMITS.typingRate)) return;
+      socket.isTyping = true;
+      socket.to(socket.currentRoom).emit('typing');
+    }
+
+    if (socket.typingTimer) clearTimeout(socket.typingTimer);
+    socket.typingTimer = setTimeout(() => stopSocketTyping(socket), TYPING_IDLE_MS);
+    socket.typingTimer.unref?.();
+  }
+
   function handleLeaveRoom(socket) {
     if (distributedEnabled()) return dHandleLeaveRoom(socket);
 
@@ -2815,12 +3106,14 @@ function createChatServer({
     const roomId = socket.currentRoom;
     chatStore.finish(roomId).catch(logError);
     const partner = socket.partner;
+    stopSocketTyping(socket);
     socket.leave(roomId);
     socket.currentRoom = null;
     socket.partner = null;
     socket.partnerInfo = null;
 
     if (partner && !partner.disconnected && partner.currentRoom === roomId) {
+      stopSocketTyping(partner, { notify: false });
       partner.leave(roomId);
       partner.currentRoom = null;
       partner.partner = null;
@@ -2996,6 +3289,7 @@ function createChatServer({
         partner.interests.includes(interest),
       );
       socket.emit('matched', {
+        chatId: roomId,
         partnerName: partner.username,
         partnerColor: partner.color,
         partnerId: partner.clientId,
@@ -3011,6 +3305,7 @@ function createChatServer({
     chatStore.finish(roomId).catch(logError);
     for (const socket of io.sockets.sockets.values()) {
       if (socket.currentRoom === roomId && socket.id !== leaverSocketId) {
+        stopSocketTyping(socket, { notify: false });
         socket.leave(roomId);
         socket.currentRoom = null;
         socket.partnerInfo = null;
@@ -3024,6 +3319,7 @@ function createChatServer({
     if (!roomId) return;
     chatStore.finish(roomId).catch(logError);
 
+    stopSocketTyping(socket);
     socket.leave(roomId);
     socket.currentRoom = null;
     socket.partnerInfo = null;
@@ -3110,6 +3406,8 @@ function createChatServer({
     socket.color = COLORS[Math.floor(Math.random() * COLORS.length)];
     socket.rateLimits = Object.create(null);
     socket.isQueued = false;
+    socket.isTyping = false;
+    socket.typingTimer = null;
 
     socket.on(
       'login',
@@ -3174,6 +3472,7 @@ function createChatServer({
           return;
         }
 
+        stopSocketTyping(socket);
         const roomId = socket.currentRoom;
         const messageId = crypto.randomUUID();
         const text = maskProfanity(parsed.value);
@@ -3226,18 +3525,14 @@ function createChatServer({
     socket.on(
       'typing',
       safelyHandle(socket, () => {
-        if (socket.currentRoom && !isRateLimited(socket, 'typing', LIMITS.typingRate)) {
-          socket.to(socket.currentRoom).emit('typing');
-        }
+        startSocketTyping(socket);
       }),
     );
 
     socket.on(
       'stop_typing',
       safelyHandle(socket, () => {
-        if (socket.currentRoom) {
-          socket.to(socket.currentRoom).emit('stop_typing');
-        }
+        stopSocketTyping(socket);
       }),
     );
 
@@ -3286,6 +3581,53 @@ function createChatServer({
     );
 
     socket.on(
+      'rateChat',
+      safelyHandle(socket, async (data) => {
+        if (!socket.hasLoggedIn) {
+          sendError(socket, 'invalid_state', 'Start a chat before leaving feedback.');
+          return;
+        }
+        const parsed = parseChatFeedback(data);
+        if (parsed.error) {
+          sendError(socket, 'invalid_feedback', parsed.error);
+          return;
+        }
+        try {
+          const result = await chatStore.addFeedback(parsed.value.chatId, {
+            clientId: socket.clientId,
+            rating: parsed.value.rating,
+            comment: parsed.value.comment,
+            createdAt: new Date().toISOString(),
+          });
+          if (result.error === 'not_found') {
+            sendError(socket, 'invalid_feedback', 'That chat is no longer available for feedback.');
+            return;
+          }
+          if (result.error === 'chat_active') {
+            sendError(socket, 'invalid_feedback', 'Finish the chat before leaving feedback.');
+            return;
+          }
+          if (result.error === 'not_participant') {
+            sendError(socket, 'invalid_feedback', 'You can only rate your own chats.');
+            return;
+          }
+          if (result.error === 'already_submitted') {
+            sendError(socket, 'invalid_feedback', 'You have already rated this chat.');
+            return;
+          }
+          socket.emit('chat_rating_received', {
+            chatId: parsed.value.chatId,
+            rating: parsed.value.rating,
+          });
+          broadcastModerationUpdate('chats', 'updated');
+        } catch (error) {
+          logError(error);
+          sendError(socket, 'server_error', 'Could not save chat feedback. Please try again.');
+        }
+      }),
+    );
+
+    socket.on(
       'reportPartner',
       safelyHandle(socket, async (data) => {
         if (!socket.currentRoom || !socket.partnerInfo) {
@@ -3309,34 +3651,77 @@ function createChatServer({
         }
 
         const partner = socket.partnerInfo;
-        const chatId = socket.currentRoom;
-        const report = await reportStore.append({
-          id: crypto.randomUUID(),
-          createdAt: new Date().toISOString(),
-          chatId,
+        await appendReport({
+          chatId: socket.currentRoom,
           reporter: { alias: socket.username, clientId: socket.clientId },
           reportedUser: { alias: partner.username, clientId: partner.clientId },
           reason: parsed.value,
-          status: 'new',
-          moderationNote: '',
-          moderationAction: 'none',
-          actionAppliedAt: null,
-          reviewedAt: null,
         });
-        logReport(report);
-        broadcastModerationUpdate('reports', 'created');
         socket.emit('report_received');
+      }),
+    );
 
-        if (
-          await registerReportAgainst(partner.clientId, {
-            alias: partner.username,
-            reportId: report.id,
-          })
-        ) {
-          log(`Auto-banned client after reaching the report threshold.`);
-          removeBannedClient(partner.clientId);
-          broadcastQueueStatus();
+    socket.on(
+      'reportChat',
+      safelyHandle(socket, async (data) => {
+        if (!socket.hasLoggedIn) {
+          sendError(socket, 'invalid_state', 'Start a chat before reporting feedback.');
+          return;
         }
+        if (isRateLimited(socket, 'report', LIMITS.reportRate)) {
+          sendError(
+            socket,
+            'rate_limited',
+            'You have reached the report limit. Please try again later.',
+          );
+          return;
+        }
+        const parsed = parsePostChatReport(data);
+        if (parsed.error) {
+          sendError(socket, 'invalid_report', parsed.error);
+          return;
+        }
+        const participants = await getChatPartner(parsed.value.chatId, socket.clientId);
+        if (!participants) {
+          sendError(socket, 'invalid_report', 'You can only report someone from your own chat.');
+          return;
+        }
+        const report = await appendReport({
+          chatId: parsed.value.chatId,
+          reporter: participants.reporter,
+          reportedUser: participants.reportedUser,
+          reason: parsed.value.reason,
+        });
+        socket.emit('chat_report_received', { chatId: report.chatId });
+      }),
+    );
+
+    socket.on(
+      'blockChatPartner',
+      safelyHandle(socket, async (data) => {
+        if (!socket.hasLoggedIn) {
+          sendError(socket, 'invalid_state', 'Start a chat before blocking someone.');
+          return;
+        }
+        if (isRateLimited(socket, 'block', LIMITS.blockRate)) {
+          sendError(socket, 'rate_limited', 'You are blocking too quickly. Please wait a moment.');
+          return;
+        }
+        if (!isPlainObject(data) || !isChatId(data.chatId)) {
+          sendError(socket, 'invalid_state', 'Choose a valid chat to block.');
+          return;
+        }
+        const participants = await getChatPartner(data.chatId, socket.clientId);
+        if (!participants) {
+          sendError(socket, 'invalid_state', 'You can only block someone from your own chat.');
+          return;
+        }
+        socket.blockedClientIds.add(participants.reportedUser.clientId);
+        socket.emit('chat_partner_blocked', {
+          chatId: data.chatId,
+          partnerId: participants.reportedUser.clientId,
+          partnerName: participants.reportedUser.alias,
+        });
       }),
     );
 
@@ -3458,11 +3843,22 @@ function createChatServer({
 }
 
 if (require.main === module) {
-  const { server } = createChatServer();
-  const port = process.env.PORT || 3000;
-  server.listen(port, () => {
-    console.log(`Server running on http://localhost:${port}`);
-  });
+  applyPendingRestore()
+    .then((result) => {
+      if (result) {
+        console.log(`Restored backup ${result.restored.snapshot}.`);
+        console.log(`Created safety backup at ${result.safetyBackup.path}.`);
+      }
+      const { server } = createChatServer();
+      const port = process.env.PORT || 3000;
+      server.listen(port, () => {
+        console.log(`Server running on http://localhost:${port}`);
+      });
+    })
+    .catch((error) => {
+      console.error(`Startup restore failed: ${error.message}`);
+      process.exitCode = 1;
+    });
 }
 
 module.exports = { createChatServer, LIMITS, loadProfanityList, buildProfanityMasker };

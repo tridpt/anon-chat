@@ -44,6 +44,9 @@ const openReportsStat = document.getElementById('stat-open-reports');
 const linkedReportsStat = document.getElementById('stat-linked-reports');
 const resolvedReportsStat = document.getElementById('stat-resolved-reports');
 const storedChatsStat = document.getElementById('stat-stored-chats');
+const chatRatingsStat = document.getElementById('stat-chat-ratings');
+const chatRatingCaption = document.getElementById('stat-chat-rating-caption');
+const unsafeRatingsStat = document.getElementById('stat-unsafe-ratings');
 const activeBansStat = document.getElementById('stat-active-bans');
 const pendingAppealsStat = document.getElementById('stat-pending-appeals');
 const refreshModeratorsButton = document.getElementById('refresh-moderators');
@@ -53,10 +56,23 @@ const moderatorRoleInput = document.getElementById('moderator-role');
 const moderatorPasswordInput = document.getElementById('moderator-password');
 const createModeratorButton = document.getElementById('create-moderator');
 const moderatorsContainer = document.getElementById('moderators');
+const refreshBackupsButton = document.getElementById('refresh-backups');
+const backupsContainer = document.getElementById('backups');
+const pendingRestoreContainer = document.getElementById('pending-restore');
 const TAB_KEY = 'ghostchat-admin-tab';
 const LEGACY_TOKEN_KEY = 'ghostchat-admin-token';
 const CHAT_PAGE_SIZE = 10;
-const TAB_ORDER = ['overview', 'reports', 'appeals', 'resolved', 'bans', 'audit', 'team', 'chats'];
+const TAB_ORDER = [
+  'overview',
+  'reports',
+  'appeals',
+  'resolved',
+  'bans',
+  'audit',
+  'team',
+  'backups',
+  'chats',
+];
 let activeTab = 'overview';
 let chatPage = 1;
 let isAuthenticated = false;
@@ -219,6 +235,17 @@ function updateReportStats(activeReports, archivedReports = []) {
   resolvedReportsStat.innerText = String(archivedReports.length);
 }
 
+function updateFeedbackStats(summary = {}) {
+  const total = Number(summary.total) || 0;
+  const positive = Number(summary.positive) || 0;
+  const unsafe = Number(summary.unsafe) || 0;
+  chatRatingsStat.innerText = String(total);
+  unsafeRatingsStat.innerText = String(unsafe);
+  chatRatingCaption.innerText = total
+    ? `${Math.round((positive / total) * 100)}% marked the chat as good`
+    : 'Feedback submitted by users';
+}
+
 function getSavedTab() {
   try {
     const savedTab = window.sessionStorage.getItem(TAB_KEY);
@@ -236,6 +263,7 @@ function loadActiveTab() {
   if (activeTab === 'bans') return loadBans();
   if (activeTab === 'audit') return loadAuditLog();
   if (activeTab === 'team') return loadModerators();
+  if (activeTab === 'backups') return loadBackups();
   return loadChats();
 }
 
@@ -246,6 +274,9 @@ function clearWorkspace() {
   bansContainer.innerHTML = '';
   auditLogContainer.innerHTML = '';
   moderatorsContainer.innerHTML = '';
+  backupsContainer.innerHTML = '';
+  pendingRestoreContainer.innerHTML = '';
+  pendingRestoreContainer.hidden = true;
   chatsContainer.innerHTML = '';
   chatPagination.hidden = true;
   openReportsStat.innerText = '—';
@@ -259,12 +290,19 @@ function clearWorkspace() {
 function updateRoleUi() {
   const teamTab = document.getElementById('tab-team');
   const teamPanel = document.getElementById('panel-team');
-  const showTeam = isAuthenticated && canManageTeam();
-  teamTab.hidden = !showTeam;
-  teamPanel.hidden = !showTeam || activeTab !== 'team';
-  if (!showTeam && activeTab === 'team') setActiveTab('overview', { load: false });
-  moderatorForm.hidden = !showTeam;
-  if (refreshModeratorsButton) refreshModeratorsButton.hidden = !showTeam;
+  const backupsTab = document.getElementById('tab-backups');
+  const backupsPanel = document.getElementById('panel-backups');
+  const showAdminTools = isAuthenticated && canManageTeam();
+  teamTab.hidden = !showAdminTools;
+  teamPanel.hidden = !showAdminTools || activeTab !== 'team';
+  backupsTab.hidden = !showAdminTools;
+  backupsPanel.hidden = !showAdminTools || activeTab !== 'backups';
+  if (!showAdminTools && ['team', 'backups'].includes(activeTab)) {
+    setActiveTab('overview', { load: false });
+  }
+  moderatorForm.hidden = !showAdminTools;
+  if (refreshModeratorsButton) refreshModeratorsButton.hidden = !showAdminTools;
+  if (refreshBackupsButton) refreshBackupsButton.hidden = !showAdminTools;
 }
 
 function setAuthenticated(authenticated, expiresAt = null, nextPrincipal = null) {
@@ -340,6 +378,156 @@ function setStatus(message, isError = false) {
 function formatDate(value) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(
     new Date(value),
+  );
+}
+
+function formatBytes(value) {
+  if (!Number.isFinite(value) || value < 0) return 'Unknown size';
+  if (value < 1024) return `${value} B`;
+  const units = ['KB', 'MB', 'GB'];
+  let size = value / 1024;
+  let index = 0;
+  while (size >= 1024 && index < units.length - 1) {
+    size /= 1024;
+    index += 1;
+  }
+  return `${size.toFixed(size >= 10 ? 0 : 1)} ${units[index]}`;
+}
+
+function renderPendingRestore(pendingRestore) {
+  pendingRestoreContainer.innerHTML = '';
+  pendingRestoreContainer.hidden = !pendingRestore;
+  if (!pendingRestore) return;
+
+  const heading = document.createElement('strong');
+  heading.innerText = `Recovery queued: ${pendingRestore.snapshot}`;
+  const description = document.createElement('p');
+  description.innerText = `Requested by ${pendingRestore.requestedBy} on ${formatDate(pendingRestore.requestedAt)}. Restart the app to validate and apply it. The current data will be captured in a safety backup first.`;
+  pendingRestoreContainer.append(heading, description);
+}
+
+function createBackupCard(backup, pendingRestore) {
+  const card = document.createElement('article');
+  card.className = `backup-card${backup.verified ? '' : ' invalid'}`;
+
+  const topLine = document.createElement('div');
+  topLine.className = 'backup-topline';
+  const details = document.createElement('div');
+  const heading = document.createElement('h3');
+  heading.innerText = backup.snapshot;
+  const meta = document.createElement('p');
+  meta.className = 'backup-meta';
+  meta.innerText = backup.verified
+    ? `${formatDate(backup.createdAt)} · ${backup.files.length} JSON file${backup.files.length === 1 ? '' : 's'} · ${formatBytes(backup.totalBytes)}`
+    : 'This snapshot failed verification and cannot be restored.';
+  details.append(heading, meta);
+  const badge = document.createElement('span');
+  badge.className = `badge ${backup.verified ? 'resolved' : 'rejected'}`;
+  badge.innerText = backup.verified ? 'Verified' : 'Invalid';
+  topLine.append(details, badge);
+  card.appendChild(topLine);
+
+  if (!backup.verified) {
+    const error = document.createElement('p');
+    error.className = 'backup-error';
+    error.innerText = backup.error || 'Could not verify this snapshot.';
+    card.appendChild(error);
+    return card;
+  }
+
+  const preview = document.createElement('details');
+  preview.className = 'backup-preview';
+  const summary = document.createElement('summary');
+  summary.innerText = 'Preview files and checksums';
+  const files = document.createElement('ul');
+  files.className = 'backup-files';
+  backup.files.forEach((file) => {
+    const item = document.createElement('li');
+    item.innerText = `${file.name} · ${formatBytes(file.bytes)} · SHA-256 ${file.sha256}`;
+    files.appendChild(item);
+  });
+  preview.append(summary, files);
+  card.appendChild(preview);
+
+  if (!canManageTeam()) return card;
+  const isPending = pendingRestore?.snapshot === backup.snapshot;
+  const actions = document.createElement('div');
+  actions.className = 'backup-actions';
+  if (isPending) {
+    const pending = document.createElement('p');
+    pending.className = 'backup-pending-note';
+    pending.innerText = 'This verified backup will be restored on the next app start.';
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.className = 'secondary';
+    cancel.innerText = 'Cancel recovery';
+    cancel.addEventListener('click', async () => {
+      cancel.disabled = true;
+      try {
+        await api(`/api/admin/backups/${encodeURIComponent(backup.snapshot)}/restore`, {
+          method: 'DELETE',
+        });
+        setStatus('Pending backup recovery cancelled.');
+        await loadBackups();
+      } catch (error) {
+        setStatus(error.message, true);
+        cancel.disabled = false;
+      }
+    });
+    actions.append(pending, cancel);
+  } else if (pendingRestore) {
+    const note = document.createElement('p');
+    note.className = 'backup-pending-note';
+    note.innerText = `Recovery of ${pendingRestore.snapshot} is already queued. Cancel it before selecting another backup.`;
+    actions.appendChild(note);
+  } else {
+    const warning = document.createElement('p');
+    warning.className = 'backup-warning';
+    warning.innerText =
+      'Recovery replaces all JSON data after restart. Type the confirmation exactly to queue it.';
+    const confirmation = document.createElement('input');
+    confirmation.type = 'text';
+    confirmation.autocomplete = 'off';
+    confirmation.spellcheck = false;
+    confirmation.placeholder = `RESTORE ${backup.snapshot}`;
+    confirmation.setAttribute('aria-label', `Confirm restore of ${backup.snapshot}`);
+    const restore = document.createElement('button');
+    restore.type = 'button';
+    restore.className = 'danger-button';
+    restore.innerText = 'Queue recovery';
+    restore.addEventListener('click', async () => {
+      restore.disabled = true;
+      try {
+        await api(`/api/admin/backups/${encodeURIComponent(backup.snapshot)}/restore`, {
+          method: 'POST',
+          body: JSON.stringify({ confirmation: confirmation.value.trim() }),
+        });
+        setStatus('Recovery queued. Restart the app to validate and apply this backup.');
+        await loadBackups();
+      } catch (error) {
+        setStatus(error.message, true);
+        restore.disabled = false;
+      }
+    });
+    actions.append(warning, confirmation, restore);
+  }
+  card.appendChild(actions);
+  return card;
+}
+
+function renderBackups(backups, pendingRestore) {
+  backupsContainer.innerHTML = '';
+  renderPendingRestore(pendingRestore);
+  if (!backups.length) {
+    const empty = document.createElement('p');
+    empty.className = 'empty-state';
+    empty.innerText =
+      'No backup snapshots are available yet. Run npm run backup or enable scheduled backups.';
+    backupsContainer.appendChild(empty);
+    return;
+  }
+  backups.forEach((backup) =>
+    backupsContainer.appendChild(createBackupCard(backup, pendingRestore)),
   );
 }
 
@@ -959,6 +1147,26 @@ function createChatCard(chat) {
     });
   }
 
+  const feedback = document.createElement('div');
+  feedback.className = 'chat-feedback-summary';
+  const feedbackSummary = chat.feedbackSummary || {};
+  const feedbackTotal = Number(feedbackSummary.total) || 0;
+  if (!feedbackTotal) {
+    feedback.innerText = 'No ratings yet.';
+    feedback.classList.add('empty');
+  } else {
+    const summaryLine = document.createElement('p');
+    summaryLine.innerText = `${feedbackTotal} rating${feedbackTotal === 1 ? '' : 's'} · Good ${feedbackSummary.positive || 0} · Not a fit ${feedbackSummary.not_a_match || 0} · Unsafe ${feedbackSummary.unsafe || 0}`;
+    feedback.appendChild(summaryLine);
+    (chat.feedback || []).forEach((entry) => {
+      const item = document.createElement('p');
+      const label =
+        entry.rating === 'positive' ? 'Good' : entry.rating === 'unsafe' ? 'Unsafe' : 'Not a fit';
+      item.innerText = `${label}${entry.comment ? `: ${entry.comment}` : ''}`;
+      feedback.appendChild(item);
+    });
+  }
+
   const actions = document.createElement('div');
   actions.className = 'chat-actions';
   const deleteButton = document.createElement('button');
@@ -980,7 +1188,7 @@ function createChatCard(chat) {
     }
   });
   actions.appendChild(deleteButton);
-  card.append(topline, messages, actions);
+  card.append(topline, messages, feedback, actions);
   return card;
 }
 
@@ -1066,17 +1274,19 @@ async function loadAppeals() {
 async function loadOverview() {
   try {
     setStatus('Loading overview...');
-    const [reportsResult, archiveResult, bansResult, chatsResult, appealsResult] =
+    const [reportsResult, archiveResult, bansResult, chatsResult, appealsResult, feedbackResult] =
       await Promise.all([
         api('/api/admin/reports'),
         api('/api/admin/reports/archive'),
         api('/api/admin/bans'),
         api('/api/admin/chats?page=1&pageSize=1'),
         api('/api/admin/appeals?status=pending'),
+        api('/api/admin/chat-feedback'),
       ]);
     updateReportStats(reportsResult.reports, archiveResult.reports);
     activeBansStat.innerText = String(bansResult.bans.length);
     storedChatsStat.innerText = String(chatsResult.total);
+    updateFeedbackStats(feedbackResult.summary);
     pendingAppealsStat.innerText = String(appealsResult.appeals.length);
     setNotificationCount(
       'reports',
@@ -1135,6 +1345,24 @@ async function loadAuditLog() {
     setStatus(error.message, true);
   } finally {
     refreshAuditButton.disabled = false;
+  }
+}
+
+async function loadBackups() {
+  try {
+    setStatus('Inspecting backup snapshots...');
+    refreshBackupsButton.disabled = true;
+    const { backups, pendingRestore } = await api('/api/admin/backups');
+    renderBackups(backups, pendingRestore);
+    const verified = backups.filter((backup) => backup.verified).length;
+    setStatus(`${verified} verified backup${verified === 1 ? '' : 's'} available.`);
+  } catch (error) {
+    backupsContainer.innerHTML = '';
+    pendingRestoreContainer.innerHTML = '';
+    pendingRestoreContainer.hidden = true;
+    setStatus(error.message, true);
+  } finally {
+    refreshBackupsButton.disabled = false;
   }
 }
 
@@ -1326,6 +1554,7 @@ refreshAppealsButton.addEventListener('click', loadAppeals);
 refreshBansButton.addEventListener('click', loadBans);
 refreshAuditButton.addEventListener('click', loadAuditLog);
 refreshModeratorsButton.addEventListener('click', loadModerators);
+refreshBackupsButton.addEventListener('click', loadBackups);
 chatFilterForm.addEventListener('submit', (event) => {
   event.preventDefault();
   chatPage = 1;

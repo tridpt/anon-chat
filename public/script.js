@@ -56,6 +56,9 @@ const skipBtn = document.getElementById('skip-btn');
 const reportBtn = document.getElementById('report-btn');
 const blockBtn = document.getElementById('block-btn');
 const typingIndicator = document.getElementById('typing-indicator');
+const typingText = document.getElementById('typing-text');
+const newMessagesBtn = document.getElementById('new-messages-btn');
+const newMessagesText = document.getElementById('new-messages-text');
 const loginError = document.getElementById('login-error');
 const waitingTitle = document.getElementById('waiting-title');
 const waitingDetail = document.getElementById('waiting-detail');
@@ -67,6 +70,20 @@ const reportReason = document.getElementById('report-reason');
 const reportNote = document.getElementById('report-note');
 const reportAndBlock = document.getElementById('report-and-block');
 const reportCancel = document.getElementById('report-cancel');
+const blockDialog = document.getElementById('block-dialog');
+const blockForm = document.getElementById('block-form');
+const blockDialogTitle = document.getElementById('block-dialog-title');
+const blockDialogDescription = document.getElementById('block-dialog-description');
+const blockCancel = document.getElementById('block-cancel');
+const blockConfirmText = document.getElementById('block-confirm-text');
+const feedbackDialog = document.getElementById('feedback-dialog');
+const feedbackForm = document.getElementById('feedback-form');
+const feedbackComment = document.getElementById('feedback-comment');
+const feedbackSkip = document.getElementById('feedback-skip');
+const feedbackSubmit = document.getElementById('feedback-submit');
+const feedbackError = document.getElementById('feedback-error');
+const feedbackUnsafeActions = document.getElementById('feedback-unsafe-actions');
+const feedbackReportBlock = document.getElementById('feedback-report-block');
 const icebreakerPanel = document.getElementById('icebreaker-panel');
 const icebreakerPrompts = document.getElementById('icebreaker-prompts');
 const manageBlocksBtn = document.getElementById('manage-blocks-btn');
@@ -114,11 +131,18 @@ let myUsername = '';
 let myInterests = '';
 let myLanguage = 'any';
 let typingTimeout = null;
+let partnerTypingTimeout = null;
 let hasActiveSession = false;
 let isInChat = false;
+let currentChatId = null;
 let currentPartnerId = null;
 let currentPartnerName = '';
 let safetyAcknowledged = false;
+let unreadMessageCount = 0;
+let pendingBlock = null;
+let pendingFeedback = null;
+let feedbackSubmitting = false;
+const defaultDocumentTitle = document.title;
 const clientId = getOrCreateClientId();
 const blockedPartners = getBlockedPartners();
 const blockedClientIds = new Set(blockedPartners.map((partner) => partner.id));
@@ -325,6 +349,146 @@ function showScreen(screenId) {
   document.getElementById(screenId).classList.add('active');
 }
 
+function clearMyTyping({ notify = true } = {}) {
+  if (typingTimeout) {
+    clearTimeout(typingTimeout);
+    typingTimeout = null;
+  }
+  if (notify && socket.connected) socket.emit('stop_typing');
+}
+
+function setPartnerTyping(active) {
+  if (partnerTypingTimeout) {
+    clearTimeout(partnerTypingTimeout);
+    partnerTypingTimeout = null;
+  }
+  if (!active || !isInChat) {
+    typingIndicator.hidden = true;
+    return;
+  }
+
+  typingText.innerText = t('partner_typing', {
+    name: currentPartnerName || partnerNameEl.innerText || 'Partner',
+  });
+  typingIndicator.hidden = false;
+  // The server also expires this state. The client timeout keeps the UI honest if a packet is lost.
+  partnerTypingTimeout = setTimeout(() => setPartnerTyping(false), 3_500);
+}
+
+function isChatNearBottom() {
+  return chatBox.scrollHeight - chatBox.scrollTop - chatBox.clientHeight < 28;
+}
+
+function updateUnreadMessages() {
+  newMessagesBtn.hidden = unreadMessageCount === 0;
+  if (unreadMessageCount === 0) {
+    document.title = defaultDocumentTitle;
+    return;
+  }
+  newMessagesText.innerText = `${t('new_messages', { count: unreadMessageCount })} · ${t('jump_to_latest')}`;
+  newMessagesBtn.setAttribute('aria-label', newMessagesText.innerText);
+  document.title = `(${unreadMessageCount}) ${defaultDocumentTitle}`;
+}
+
+function clearUnreadMessages() {
+  unreadMessageCount = 0;
+  updateUnreadMessages();
+}
+
+function noteIncomingMessage() {
+  unreadMessageCount += 1;
+  updateUnreadMessages();
+}
+
+function resetChatExperience() {
+  clearMyTyping({ notify: false });
+  setPartnerTyping(false);
+  clearUnreadMessages();
+  pendingBlock = null;
+  const label = blockBtn.querySelector('span');
+  if (label) label.innerText = t('block');
+}
+
+function queueChatFeedback({ chatId, partnerId, partnerName }) {
+  if (!chatId || !partnerId || !partnerName || pendingFeedback) return;
+  pendingFeedback = { chatId, partnerId, partnerName };
+  feedbackSubmitting = false;
+  feedbackForm.reset();
+  feedbackSubmit.disabled = false;
+  feedbackError.hidden = true;
+  feedbackError.innerText = '';
+  feedbackUnsafeActions.hidden = true;
+  if (!feedbackDialog.open) feedbackDialog.showModal();
+}
+
+function dismissChatFeedback() {
+  pendingFeedback = null;
+  feedbackSubmitting = false;
+  feedbackSubmit.disabled = false;
+  feedbackReportBlock.disabled = false;
+  if (feedbackDialog.open) feedbackDialog.close();
+}
+
+feedbackDialog.addEventListener('close', () => {
+  pendingFeedback = null;
+  feedbackSubmitting = false;
+  feedbackSubmit.disabled = false;
+  feedbackReportBlock.disabled = false;
+});
+
+function setFeedbackError(message) {
+  feedbackError.innerText = message || '';
+  feedbackError.hidden = !message;
+  feedbackSubmitting = false;
+  feedbackSubmit.disabled = false;
+  feedbackReportBlock.disabled = false;
+}
+
+function selectedFeedbackRating() {
+  return feedbackForm.querySelector('input[name="chat-rating"]:checked')?.value || '';
+}
+
+function sendChatRating() {
+  if (!pendingFeedback || !socket.connected || feedbackSubmitting) return false;
+  const rating = selectedFeedbackRating();
+  if (!rating) return false;
+  feedbackSubmitting = true;
+  feedbackSubmit.disabled = true;
+  feedbackReportBlock.disabled = true;
+  feedbackError.hidden = true;
+  socket.emit('rateChat', {
+    chatId: pendingFeedback.chatId,
+    rating,
+    comment: feedbackComment.value.trim(),
+  });
+  return true;
+}
+
+function setBlockPending(pending) {
+  const label = blockBtn.querySelector('span');
+  if (label) label.innerText = pending ? t('blocking') : t('block');
+}
+
+newMessagesBtn.addEventListener('click', () => {
+  scrollToBottom();
+  clearUnreadMessages();
+  msgInput.focus();
+});
+
+chatBox.addEventListener('scroll', () => {
+  if (isChatNearBottom()) clearUnreadMessages();
+});
+
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && isChatNearBottom()) clearUnreadMessages();
+});
+
+document.addEventListener('i18n:changed', () => {
+  if (!typingIndicator.hidden) setPartnerTyping(true);
+  updateUnreadMessages();
+  setBlockPending(Boolean(pendingBlock));
+});
+
 function getIcebreakerLanguage(partnerLanguage) {
   if (myLanguage === 'vi' || partnerLanguage === 'vi') return 'vi';
   return 'en';
@@ -491,7 +655,8 @@ socket.on('connect_error', () => {
 });
 
 socket.on('disconnect', () => {
-  typingIndicator.style.display = 'none';
+  resetChatExperience();
+  dismissChatFeedback();
   hideIcebreakers();
   clearSharedInterests();
   if (!hasActiveSession) return;
@@ -524,6 +689,7 @@ socket.on('app_error', (error) => {
   if (error?.code === 'banned') {
     hasActiveSession = false;
     isInChat = false;
+    dismissChatFeedback();
     currentPartnerId = null;
     currentPartnerName = '';
     reportBtn.disabled = true;
@@ -535,7 +701,17 @@ socket.on('app_error', (error) => {
     return;
   }
 
+  if (
+    feedbackDialog.open &&
+    ['invalid_feedback', 'invalid_report', 'rate_limited'].includes(error?.code)
+  ) {
+    setFeedbackError(message);
+    return;
+  }
+
   if (isInChat) {
+    pendingBlock = null;
+    setBlockPending(false);
     blockBtn.disabled = false;
     reportBtn.disabled = false;
     outputSystemMessage(message);
@@ -935,10 +1111,11 @@ socket.on('matched', (partnerInfo) => {
   chatBox.innerHTML = ''; // clear chat
   reactionCounts.clear();
   closeReactionPicker();
-  typingIndicator.style.display = 'none'; // hide typing
-  isInChat = true;
+  currentChatId = partnerInfo.chatId || null;
   currentPartnerId = partnerInfo.partnerId || null;
   currentPartnerName = getBlockedPartnerName(partnerInfo.partnerName);
+  isInChat = true;
+  resetChatExperience();
   reportBtn.disabled = false;
   blockBtn.disabled = false;
   renderSharedInterests(partnerInfo.sharedInterests);
@@ -959,15 +1136,22 @@ socket.on('matched', (partnerInfo) => {
 });
 
 socket.on('partner_left', () => {
+  const endedChat = {
+    chatId: currentChatId,
+    partnerId: currentPartnerId,
+    partnerName: currentPartnerName,
+  };
   outputSystemMessage(t('partner_left'));
-  typingIndicator.style.display = 'none';
+  resetChatExperience();
   hideIcebreakers();
   isInChat = false;
+  currentChatId = null;
   currentPartnerId = null;
   currentPartnerName = '';
   reportBtn.disabled = true;
   blockBtn.disabled = true;
   clearSharedInterests();
+  queueChatFeedback(endedChat);
 
   setTimeout(() => {
     if (hasActiveSession && socket.connected) {
@@ -982,17 +1166,25 @@ socket.on('partner_left', () => {
 skipBtn.addEventListener('click', () => {
   if (!socket.connected) return;
 
+  const endedChat = {
+    chatId: currentChatId,
+    partnerId: currentPartnerId,
+    partnerName: currentPartnerName,
+  };
+
   isInChat = false;
+  currentChatId = null;
   currentPartnerId = null;
   currentPartnerName = '';
   reportBtn.disabled = true;
   blockBtn.disabled = true;
-  typingIndicator.style.display = 'none';
+  resetChatExperience();
   hideIcebreakers();
   clearSharedInterests();
   socket.emit('skip');
   setWaitingStatus(t('finding_new_title'), t('finding_new_detail'));
   showScreen('waiting-screen');
+  queueChatFeedback(endedChat);
 });
 
 const cancelWaitingBtn = document.getElementById('cancel-waiting-btn');
@@ -1001,7 +1193,8 @@ cancelWaitingBtn.addEventListener('click', () => {
   isInChat = false;
   currentPartnerId = null;
   currentPartnerName = '';
-  typingIndicator.style.display = 'none';
+  resetChatExperience();
+  dismissChatFeedback();
   socket.disconnect();
   queueStatus.innerText = '';
   clearLoginError();
@@ -1009,19 +1202,31 @@ cancelWaitingBtn.addEventListener('click', () => {
 });
 
 function blockCurrentPartner() {
-  if (!isInChat || !currentPartnerId || !socket.connected || blockBtn.disabled) return;
+  if (!isInChat || !currentPartnerId || !socket.connected || pendingBlock || blockBtn.disabled)
+    return;
 
-  rememberBlockedPartner(currentPartnerId, currentPartnerName);
+  pendingBlock = { id: currentPartnerId, name: currentPartnerName };
   blockBtn.disabled = true;
   reportBtn.disabled = true;
+  setBlockPending(true);
+  clearMyTyping();
   socket.emit('blockPartner');
 }
 
 blockBtn.addEventListener('click', () => {
   if (!isInChat || !currentPartnerId) return;
 
-  const confirmed = window.confirm(t('block_confirm'));
-  if (confirmed) blockCurrentPartner();
+  blockDialogTitle.innerText = t('block_dialog_title', { name: currentPartnerName });
+  blockDialogDescription.innerText = t('block_dialog_desc');
+  blockConfirmText.innerText = t('block_and_find');
+  blockDialog.showModal();
+});
+
+blockCancel.addEventListener('click', () => blockDialog.close());
+blockForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  blockDialog.close();
+  blockCurrentPartner();
 });
 
 reportBtn.addEventListener('click', () => {
@@ -1057,15 +1262,67 @@ reportForm.addEventListener('submit', (event) => {
   if (reportAndBlock.checked) blockCurrentPartner();
 });
 
-socket.on('partner_blocked', () => {
+feedbackForm.addEventListener('change', () => {
+  feedbackUnsafeActions.hidden = selectedFeedbackRating() !== 'unsafe';
+});
+
+feedbackForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  if (!pendingFeedback || !socket.connected) return;
+  if (!sendChatRating()) {
+    setFeedbackError(t('feedback_choose_rating'));
+  }
+});
+
+feedbackSkip.addEventListener('click', dismissChatFeedback);
+
+feedbackReportBlock.addEventListener('click', () => {
+  if (!pendingFeedback || !socket.connected) return;
+  const unsafeRating = feedbackForm.querySelector('input[value="unsafe"]');
+  if (unsafeRating) unsafeRating.checked = true;
+  feedbackUnsafeActions.hidden = false;
+  if (!sendChatRating()) return;
+
+  const note = feedbackComment.value.trim();
+  const reason = note
+    ? `${t('feedback_unsafe_report_reason')}: ${note}`
+    : t('feedback_unsafe_report_reason');
+  socket.emit('reportChat', { chatId: pendingFeedback.chatId, reason });
+  socket.emit('blockChatPartner', { chatId: pendingFeedback.chatId });
+});
+
+socket.on('partner_blocked', (partner) => {
+  const endedChat = {
+    chatId: currentChatId,
+    partnerId: currentPartnerId,
+    partnerName: currentPartnerName,
+  };
+  const partnerId = partner?.partnerId || pendingBlock?.id;
+  const partnerName = partner?.partnerName || pendingBlock?.name;
+  if (partnerId) rememberBlockedPartner(partnerId, partnerName);
   isInChat = false;
   currentPartnerId = null;
   currentPartnerName = '';
-  typingIndicator.style.display = 'none';
+  resetChatExperience();
   hideIcebreakers();
   clearSharedInterests();
+  queueChatFeedback(endedChat);
   setWaitingStatus(t('finding_new_title'), t('blocked_finding_detail'));
   showScreen('waiting-screen');
+});
+
+socket.on('chat_partner_blocked', (partner) => {
+  rememberBlockedPartner(partner?.partnerId, partner?.partnerName);
+});
+
+socket.on('chat_rating_received', (rating) => {
+  if (!pendingFeedback || rating?.chatId !== pendingFeedback.chatId) return;
+  dismissChatFeedback();
+  notify('GhostChat', t('feedback_thanks'));
+});
+
+socket.on('chat_report_received', () => {
+  // The rating dialog confirms the combined report and block action.
 });
 
 socket.on('report_received', () => {
@@ -1077,33 +1334,36 @@ socket.on('report_received', () => {
 // 4. Chatting & Typing Logic
 msgInput.addEventListener('input', () => {
   if (!isInChat || !socket.connected) return;
+  if (!msgInput.value.trim()) {
+    clearMyTyping();
+    return;
+  }
+  clearMyTyping({ notify: false });
   socket.emit('typing');
-
-  if (typingTimeout) clearTimeout(typingTimeout);
-
   typingTimeout = setTimeout(() => {
-    socket.emit('stop_typing');
+    clearMyTyping();
   }, 1500);
 });
 
 socket.on('typing', () => {
-  typingIndicator.style.display = 'flex';
-  scrollToBottom();
+  setPartnerTyping(true);
 });
 
 socket.on('stop_typing', () => {
-  typingIndicator.style.display = 'none';
+  setPartnerTyping(false);
 });
 
 socket.on('message', (msg) => {
   hideIcebreakers();
-  // If we receive a message from partner, stop their typing indicator
-  if (msg.username !== myUsername) {
-    typingIndicator.style.display = 'none';
+  const isIncoming = msg.username !== myUsername;
+  const preserveScroll = isIncoming && (document.hidden || !isChatNearBottom());
+  if (isIncoming) {
+    setPartnerTyping(false);
     playBeep('message'); // Play incoming message sound
     notify(t('notify_message', { name: msg.username }), msg.text);
+    if (preserveScroll) noteIncomingMessage();
   }
-  outputMessage(msg);
+  outputMessage(msg, { scroll: !preserveScroll });
 });
 
 chatForm.addEventListener('submit', (e) => {
@@ -1111,17 +1371,15 @@ chatForm.addEventListener('submit', (e) => {
   const msg = msgInput.value.trim();
   if (!msg || !isInChat || !socket.connected) return;
 
-  // Stop typing immediately when sending
-  clearTimeout(typingTimeout);
-  socket.emit('stop_typing');
-
   socket.emit('chatMessage', msg);
   msgInput.value = '';
+  clearMyTyping();
+  clearUnreadMessages();
   msgInput.focus();
 });
 
 // Helper DOM Functions
-function outputMessage(msg) {
+function outputMessage(msg, { scroll = true } = {}) {
   const div = document.createElement('div');
   const isSelf = msg.username === myUsername;
 
@@ -1178,7 +1436,7 @@ function outputMessage(msg) {
   div.appendChild(reactions);
 
   chatBox.appendChild(div);
-  scrollToBottom();
+  if (scroll) scrollToBottom();
 }
 
 function outputSystemMessage(text) {

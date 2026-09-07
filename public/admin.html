@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="robots" content="noindex, nofollow" />
     <title>GhostChat Moderation</title>
-    <link rel="stylesheet" href="admin.css?v=8" />
+    <link rel="stylesheet" href="admin.css?v=9" />
   </head>
   <body>
     <main class="admin-shell">
@@ -162,6 +162,20 @@
             Team
           </button>
           <button
+            id="tab-backups"
+            class="admin-tab"
+            type="button"
+            role="tab"
+            aria-selected="false"
+            aria-controls="panel-backups"
+            data-tab="backups"
+            data-admin-only
+            hidden
+            tabindex="-1"
+          >
+            Backups
+          </button>
+          <button
             id="tab-chats"
             class="admin-tab"
             type="button"
@@ -204,9 +218,21 @@
               <span class="stat-caption">Available in the archive</span>
             </article>
             <article class="stat-card">
+              <span class="stat-label">Chat ratings</span>
+              <strong id="stat-chat-ratings">—</strong>
+              <span id="stat-chat-rating-caption" class="stat-caption"
+                >Feedback submitted by users</span
+              >
+            </article>
+            <article class="stat-card">
               <span class="stat-label">Active bans</span>
               <strong id="stat-active-bans">—</strong>
               <span class="stat-caption">Currently restricted clients</span>
+            </article>
+            <article class="stat-card">
+              <span class="stat-label">Safety flags</span>
+              <strong id="stat-unsafe-ratings">—</strong>
+              <span class="stat-caption">Chats marked as unsafe</span>
             </article>
             <article class="stat-card">
               <span class="stat-label">Pending appeals</span>
@@ -395,6 +421,36 @@
         </section>
 
         <section
+          id="panel-backups"
+          class="tab-panel"
+          role="tabpanel"
+          aria-labelledby="tab-backups"
+          data-tab-panel="backups"
+          hidden
+        >
+          <section class="admin-section backup-section" aria-labelledby="backups-title">
+            <div class="section-heading">
+              <div>
+                <span class="section-kicker">Disaster recovery</span>
+                <h2 id="backups-title">Verified backups</h2>
+                <p>
+                  Inspect a snapshot before recovery. A restore is queued and applied only after the
+                  app stops and starts again; the current data is backed up first.
+                </p>
+              </div>
+              <button id="refresh-backups" type="button" class="secondary">Refresh backups</button>
+            </div>
+            <section
+              id="pending-restore"
+              class="pending-restore"
+              aria-live="polite"
+              hidden
+            ></section>
+            <section id="backups" class="backup-list" aria-live="polite"></section>
+          </section>
+        </section>
+
+        <section
           id="panel-chats"
           class="tab-panel"
           role="tabpanel"
@@ -435,6 +491,6 @@
       </div>
     </main>
 
-    <script src="admin.js?v=13"></script>
+    <script src="admin.js?v=14"></script>
   </body>
 </html>

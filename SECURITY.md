@@ -25,6 +25,10 @@ This project is an anonymous chat service. A few design points worth knowing:
 - Backups contain the same reports, transcripts, moderator hashes, and audit data as
   `DATA_DIR`; backup snapshots are not encrypted, so store `BACKUP_DIR` on a
   restricted disk and replicate it only to trusted, access-controlled storage.
+- Recovery is restricted to named `admin` accounts. The console re-verifies manifest
+  checksums and JSON syntax before a recovery can be queued; it runs only during a
+  subsequent app startup and makes a safety snapshot of current data first. Restrict
+  admin access and protect both the selected backup and the safety snapshot.
 - Ban appeal explanations are also stored in `DATA_DIR/appeals.json` and may contain
   sensitive information; protect and retain this file under the same policy as transcripts.
 - The `18+` confirmation is a self-attestation, not identity or age verification.

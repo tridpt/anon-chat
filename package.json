@@ -8,6 +8,7 @@
     "dev": "node --watch index.js",
     "backup": "node scripts/backup-data.js",
     "backup:staging": "node --env-file=.env.staging scripts/backup-data.js",
+    "restore:pending": "node scripts/restore-data.js --apply-pending",
     "start:staging": "node --env-file=.env.staging index.js",
     "test": "node --test",
     "lint": "eslint .",

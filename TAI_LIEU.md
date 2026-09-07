@@ -9,7 +9,7 @@
 **GhostChat** là một ứng dụng web cho phép hai người lạ trò chuyện ẩn danh theo thời gian thực, được ghép cặp dựa trên **sở thích chung** và **ngôn ngữ ưu tiên**. Ứng dụng:
 
 - **Không tạo tài khoản**, không yêu cầu đăng nhập.
-- **Lưu transcript có kiểm soát** — tin nhắn được che từ nhạy cảm và lưu trong `data/chats.json` để moderator xem, tự dọn theo `CHAT_RETENTION_DAYS`.
+- **Lưu transcript có kiểm soát** — tin nhắn được che từ nhạy cảm và lưu trong `data/chats.json` để moderator xem, tự dọn theo `CHAT_RETENTION_DAYS`; người dùng có thể đánh giá sau chat và gửi report + block khi thấy không an toàn.
 - Có cơ chế an toàn: chặn, báo cáo, lọc từ ngữ xấu, tự động cấm tạm thời, và một trang kiểm duyệt riêng.
 
 Mỗi khách truy cập được gán một `clientId` ngẫu nhiên lưu trong trình duyệt (localStorage). Đây không phải tài khoản — xóa dữ liệu trình duyệt sẽ tạo `clientId` mới. `clientId` chỉ dùng để tránh ghép lại với người đã chặn và để gắn báo cáo/cấm.
@@ -18,20 +18,20 @@ Mỗi khách truy cập được gán một `clientId` ngẫu nhiên lưu trong 
 
 ## 2. Tính năng
 
-| Nhóm       | Tính năng                                                                                           |
-| ---------- | --------------------------------------------------------------------------------------------------- |
-| Ghép cặp   | Ghép theo sở thích chung, ưu tiên ngôn ngữ tương thích (Việt/Anh/bất kỳ), fallback sau 5 giây chờ   |
-| Trò chuyện | Nhắn tin thời gian thực, chỉ báo "đang gõ", âm thanh thông báo                                      |
-| Gợi ý      | Câu mở lời (icebreaker) theo sở thích chung và ngôn ngữ                                             |
-| Hàng đợi   | Hiển thị số người đang chờ, ước tính thời gian chờ, số người trực tuyến                             |
-| Cảm xúc    | Emoji picker khi soạn tin; thả reaction emoji lên từng tin nhắn                                     |
-| Giao diện  | Chuyển dark/light theme; đổi ngôn ngữ giao diện Việt/Anh (i18n)                                     |
-| Thông báo  | Thông báo trình duyệt khi được ghép cặp hoặc có tin mới lúc tab ẩn                                  |
-| An toàn    | Bỏ qua (skip), chặn (block), bỏ chặn, báo cáo với lý do                                             |
-| Kiểm duyệt | Lọc từ ngữ xấu, giới hạn link, tự động cấm theo số report; trang `/admin`                           |
-| Khiếu nại  | Người bị ban gửi appeal; moderator duyệt/từ chối, duyệt sẽ gỡ ban và giữ liên kết report/transcript |
-| Vận hành   | Endpoint `/health` với số liệu; ban lưu bền vững qua restart                                        |
-| Mở rộng    | Redis adapter tùy chọn cho nhiều instance                                                           |
+| Nhóm       | Tính năng                                                                                               |
+| ---------- | ------------------------------------------------------------------------------------------------------- |
+| Ghép cặp   | Ghép theo sở thích chung, ưu tiên ngôn ngữ tương thích (Việt/Anh/bất kỳ), fallback sau 5 giây chờ       |
+| Trò chuyện | Nhắn tin thời gian thực, chỉ báo "đang gõ", âm thanh thông báo                                          |
+| Gợi ý      | Câu mở lời (icebreaker) theo sở thích chung và ngôn ngữ                                                 |
+| Hàng đợi   | Hiển thị số người đang chờ, ước tính thời gian chờ, số người trực tuyến                                 |
+| Cảm xúc    | Emoji picker khi soạn tin; thả reaction emoji lên từng tin nhắn                                         |
+| Giao diện  | Chuyển dark/light theme; đổi ngôn ngữ giao diện Việt/Anh (i18n)                                         |
+| Thông báo  | Báo trình duyệt khi được ghép cặp/có tin mới lúc tab ẩn; badge + nút xem tin mới khi đang đọc phía trên |
+| An toàn    | Bỏ qua (skip), chặn (block) có xác nhận, bỏ chặn, báo cáo với lý do, đánh giá sau chat                  |
+| Kiểm duyệt | Lọc từ ngữ xấu, giới hạn link, tự động cấm theo số report; trang `/admin`                               |
+| Khiếu nại  | Người bị ban gửi appeal; moderator duyệt/từ chối, duyệt sẽ gỡ ban và giữ liên kết report/transcript     |
+| Vận hành   | Endpoint `/health` với số liệu; ban lưu bền vững qua restart                                            |
+| Mở rộng    | Redis adapter tùy chọn cho nhiều instance                                                               |
 
 ---
 
@@ -227,6 +227,7 @@ Tham số: `{ logger, dataDir, adminToken, adminPath, adminSessionTtlMs, redisUr
 | PATCH    | `/api/admin/moderators/:id` | Admin đổi role, mật khẩu, hoặc bật/tắt tài khoản                                                                  |
 | GET      | `/api/admin/reports`        | Yêu cầu admin. Liệt kê báo cáo, lọc theo `?status=`                                                               |
 | PATCH    | `/api/admin/reports/:id`    | Yêu cầu admin. Cập nhật `status` + `moderationNote`                                                               |
+| GET      | `/api/admin/chat-feedback`  | Yêu cầu admin. Trả tổng số đánh giá và các cờ an toàn từ transcript                                               |
 | GET      | `/api/admin/events`         | Yêu cầu session admin. Luồng SSE báo report/appeal/ban mới để dashboard tự cập nhật                               |
 | POST     | `/api/appeals`              | Công khai có giới hạn. Người đang bị ban gửi một lời giải thích khiếu nại                                         |
 | GET      | `/api/admin/appeals`        | Yêu cầu admin. Liệt kê appeal, lọc theo `?status=pending`, `approved`, hoặc `rejected`                            |
@@ -346,7 +347,9 @@ Các nhóm logic chính:
 - **Theme** — `applyTheme` đặt `data-theme` trên `<html>`, đổi icon mặt trăng/mặt trời.
 - **Emoji picker** — panel 70 emoji, chèn tại vị trí con trỏ, giới hạn 500 ký tự.
 - **Reactions** — picker nổi cạnh tin nhắn, gửi `reactMessage`, gom đếm và render chip qua sự kiện `message_reaction`.
-- **Thông báo** — xin quyền lúc login; `notify` chỉ bắn khi `document.hidden`.
+- **Thông báo** — xin quyền lúc login; `notify` chỉ bắn khi `document.hidden`. Khi người dùng không ở cuối khung chat, tin đến không kéo màn hình xuống mà tăng badge trên tab và hiện nút xem tin mới.
+- **Đang nhập** — client tự gửi `stop_typing` khi xóa hết nội dung/gửi tin/rời chat; server chỉ relay lúc bắt đầu trạng thái gõ và tự hết hạn sau 3 giây để chỉ báo không bị kẹt.
+- **Chặn trong chat** — nút Chặn mở `#block-dialog`; chỉ sau sự kiện `partner_blocked` từ server thì client mới lưu người bị chặn vào localStorage.
 - **Vòng đời Socket.IO** — xử lý `connect`/`disconnect`/`connect_error`, các sự kiện server, gửi tin, gõ, skip, block, report.
 
 Cờ trạng thái quan trọng: `hasActiveSession`, `isInChat`, `currentPartnerId`, `currentPartnerName`.
@@ -374,6 +377,7 @@ Cờ trạng thái quan trọng: `hasActiveSession`, `isInChat`, `currentPartner
 - Đăng nhập bằng tài khoản moderator; `ADMIN_TOKEN` chỉ dùng bootstrap/recovery và trình duyệt không lưu credential mà dùng cookie phiên `HttpOnly`.
 - Tab **Team** chỉ hiện với admin để tạo account, đổi role/mật khẩu, và bật/tắt moderator.
 - `viewer` chỉ đọc; `moderator` có thể xử lý report, gỡ ban, và xóa transcript; `admin` có toàn quyền.
+- Dialog sau khi kết thúc chat cho phép chọn đánh giá, ghi chú tùy chọn, và với đánh giá không an toàn có thể tạo report + block gắn với transcript.
 - Có nút đăng xuất, tự khôi phục phiên khi tải lại, và tự yêu cầu đăng nhập lại khi phiên hết hạn.
 - Liệt kê báo cáo, lọc theo trạng thái, mỗi báo cáo là một thẻ cho phép đổi `status` và ghi `moderationNote`, lưu qua `PATCH /api/admin/reports/:id`.
 - Tab **Appeals** hiển thị hàng đợi khiếu nại, lý do và snapshot lệnh cấm, mở transcript/report liên quan,
@@ -415,6 +419,13 @@ Chạy `npm run backup` để chụp toàn bộ file JSON trong `DATA_DIR`. Mỗ
 `BACKUP_RETENTION` hoặc tham số `--keep`; đặt `BACKUP_RETENTION=0` để không tự dọn. Dữ liệu backup chưa mã hóa,
 phải bảo vệ như `DATA_DIR` và sao chép thêm sang ổ đĩa độc lập. Đặt `BACKUP_INTERVAL_HOURS=24` để server tạo một
 snapshot lúc khởi động rồi lặp lại mỗi 24 giờ; đặt `0` để chỉ backup thủ công.
+
+Admin có tab **Backups** để xem các snapshot. Server kiểm tra lại kích thước, SHA-256 và JSON của từng file trước
+khi đánh dấu snapshot là hợp lệ; snapshot lỗi vẫn được báo nhưng không thể khôi phục. Sau khi xem danh sách file,
+admin phải gõ chính xác `RESTORE <tên-snapshot>` để xếp lịch khôi phục. App không thay dữ liệu khi đang chạy: lần
+khởi động kế tiếp sẽ kiểm tra backup thêm lần nữa, tạo một safety backup của `DATA_DIR` hiện tại, rồi mới thay toàn
+bộ file JSON. Có thể hủy lịch trên tab Backups trước khi restart. Nếu quản lý app bằng tiến trình riêng, dừng app
+trước rồi chạy `npm run restore:pending` để áp dụng lịch khôi phục.
 
 ---
 
