@@ -1418,6 +1418,45 @@ body {
   transform: translateY(-1px);
 }
 
+.install-app-btn {
+  position: absolute;
+  top: 18px;
+  left: 68px;
+  z-index: 20;
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 14px;
+  color: var(--text-primary);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  transition: all 0.2s ease;
+}
+
+.install-app-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.pwa-install-steps {
+  display: grid;
+  gap: 8px;
+  padding-left: 20px;
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
 /* Emoji picker */
 .emoji-wrapper {
   position: relative;
@@ -1511,6 +1550,13 @@ body {
     right: 58px;
     height: 38px;
     min-width: 38px;
+    font-size: 12px;
+  }
+  .install-app-btn {
+    top: 12px;
+    left: 58px;
+    min-height: 38px;
+    padding: 0 11px;
     font-size: 12px;
   }
   .emoji-panel {

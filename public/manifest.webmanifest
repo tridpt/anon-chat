@@ -1,0 +1,25 @@
+{
+  "name": "GhostChat",
+  "short_name": "GhostChat",
+  "description": "Anonymous one-on-one conversations.",
+  "lang": "en",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0c1518",
+  "theme_color": "#0c1518",
+  "icons": [
+    {
+      "src": "/icons/ghostchat-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/ghostchat-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

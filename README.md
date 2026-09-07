@@ -20,6 +20,8 @@ Anonymous, one-on-one chat with language-compatible matching. GhostChat does not
 - Insert emojis from a built-in picker and switch between dark and light themes (saved per browser).
 - Use a phone-first chat layout with keyboard-aware sizing, thumb-sized Block/Report/Skip controls,
   bottom-sheet safety dialogs, and a compact responsive moderation console.
+- Install GhostChat to a phone home screen as a standalone PWA; supported browsers show an Install
+  app button, while iOS Safari shows the Share > Add to Home Screen steps.
 - Show an expiring partner-typing indicator, preserve your reading position for new messages, and provide sound/browser notifications when the tab is hidden.
 - Recover gracefully from network drops: show offline/reconnecting status, retry automatically, and return a disconnected participant to the matching queue when connectivity resumes.
 - Ask for a post-chat rating (good fit, not a match, or unsafe) with an optional comment; unsafe feedback can report and block the partner after the chat ends.
@@ -49,6 +51,13 @@ npm start
 ```
 
 Open `http://localhost:3000`.
+
+GhostChat can also be installed to a phone home screen. On Android/desktop Chrome or Edge, open the
+site and choose **Install app** when the button appears. On iPhone/iPad Safari, tap **Share** then
+**Add to Home Screen**. A phone must reach the production site over HTTPS for service workers and
+browser installation; `localhost` is treated as secure only on the development machine. The PWA
+caches the interface shell for faster startup, but a network connection is still required for live
+matching and messages.
 
 For development with automatic restart:
 

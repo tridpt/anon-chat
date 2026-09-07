@@ -3,7 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="GhostChat - anonymous one-on-one conversations." />
+    <meta name="theme-color" content="#0c1518" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="GhostChat" />
     <title>GhostChat - 1-on-1 Anonymous Matchmaking</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/ghostchat-192.png" />
+    <link rel="apple-touch-icon" sizes="192x192" href="/icons/ghostchat-192.png" />
     <link
       href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap"
       rel="stylesheet"
@@ -12,7 +21,7 @@
       rel="stylesheet"
       href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
     />
-    <link rel="stylesheet" href="style.css?v=5" />
+    <link rel="stylesheet" href="style.css?v=6" />
   </head>
   <body>
     <div class="app-container">
@@ -41,6 +50,19 @@
         aria-label="Switch interface language"
       >
         <span id="lang-toggle-label">EN</span>
+      </button>
+      <button
+        id="install-app-btn"
+        type="button"
+        class="install-app-btn"
+        data-i18n-title="install_app"
+        title="Install GhostChat"
+        aria-label="Install GhostChat"
+        aria-controls="pwa-install-dialog"
+        hidden
+      >
+        <i class="fa-solid fa-download" aria-hidden="true"></i>
+        <span data-i18n="install_app">Install</span>
       </button>
 
       <main class="chat-interface">
@@ -539,11 +561,36 @@
             </div>
           </form>
         </dialog>
+
+        <dialog
+          id="pwa-install-dialog"
+          class="report-dialog pwa-install-dialog"
+          aria-labelledby="pwa-install-title"
+        >
+          <section class="report-form">
+            <h2 id="pwa-install-title" data-i18n="install_manual_title">Install GhostChat</h2>
+            <p data-i18n="install_manual_intro">
+              Use your browser menu to install GhostChat or add it to your home screen.
+            </p>
+            <ol class="pwa-install-steps">
+              <li data-i18n="install_manual_step_menu">Open your browser's menu or Share sheet.</li>
+              <li data-i18n="install_manual_step_add">Choose Install app or Add to Home Screen.</li>
+              <li data-i18n="install_manual_step_confirm">
+                Confirm. GhostChat will appear like an app.
+              </li>
+            </ol>
+            <div class="dialog-actions">
+              <button id="pwa-install-close" type="button" class="btn-primary" data-i18n="done">
+                Done
+              </button>
+            </div>
+          </section>
+        </dialog>
       </main>
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
-    <script src="i18n.js"></script>
-    <script src="script.js?v=2"></script>
+    <script src="i18n.js?v=2"></script>
+    <script src="script.js?v=3"></script>
   </body>
 </html>

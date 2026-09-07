@@ -9,6 +9,8 @@ and the project follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Installable PWA support with a home-screen app manifest, offline shell cache, branded icons,
+  and an in-app install prompt (plus iOS Safari instructions).
 - A cancel button on the waiting screen to leave the queue and return to login.
 - Runtime-configurable profanity list via `PROFANITY_EXTRA` (comma-separated words) and
   `PROFANITY_FILE` (a JSON array), both additive to the built-in defaults.

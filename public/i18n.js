@@ -75,6 +75,13 @@
       appeal_failed: 'Could not submit your appeal. Please try again.',
       theme_toggle: 'Toggle light/dark theme',
       ui_lang_toggle: 'Switch interface language',
+      install_app: 'Install app',
+      install_manual_title: 'Install GhostChat',
+      install_manual_intro:
+        'Use your browser menu to install GhostChat or add it to your home screen.',
+      install_manual_step_menu: "Open your browser's menu or Share sheet.",
+      install_manual_step_add: 'Choose Install app or Add to Home Screen.',
+      install_manual_step_confirm: 'Confirm. GhostChat will appear like an app.',
 
       connecting_title: 'Connecting...',
       connecting_detail: 'Please wait while we reach the chat server.',
@@ -217,6 +224,13 @@
       appeal_failed: 'Không thể gửi khiếu nại. Vui lòng thử lại.',
       theme_toggle: 'Đổi giao diện sáng/tối',
       ui_lang_toggle: 'Đổi ngôn ngữ giao diện',
+      install_app: 'Cài ứng dụng',
+      install_manual_title: 'Cài GhostChat',
+      install_manual_intro:
+        'Mở menu trình duyệt để cài GhostChat hoặc thêm ứng dụng vào màn hình chính.',
+      install_manual_step_menu: 'Mở menu trình duyệt hoặc bảng Chia sẻ.',
+      install_manual_step_add: 'Chọn Cài ứng dụng hoặc Thêm vào Màn hình chính.',
+      install_manual_step_confirm: 'Xác nhận. GhostChat sẽ xuất hiện như một ứng dụng.',
 
       connecting_title: 'Đang kết nối...',
       connecting_detail: 'Vui lòng đợi trong khi chúng tôi kết nối tới máy chủ.',

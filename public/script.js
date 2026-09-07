@@ -105,6 +105,63 @@ const emojiBtn = document.getElementById('emoji-btn');
 const emojiPanel = document.getElementById('emoji-panel');
 const langToggle = document.getElementById('lang-toggle');
 const langToggleLabel = document.getElementById('lang-toggle-label');
+const installAppBtn = document.getElementById('install-app-btn');
+const pwaInstallDialog = document.getElementById('pwa-install-dialog');
+const pwaInstallClose = document.getElementById('pwa-install-close');
+
+let deferredInstallPrompt = null;
+
+function isStandaloneApp() {
+  return (
+    window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true
+  );
+}
+
+function isIosBrowser() {
+  return (
+    /iphone|ipad|ipod/i.test(window.navigator.userAgent) ||
+    (window.navigator.platform === 'MacIntel' && window.navigator.maxTouchPoints > 1)
+  );
+}
+
+function updateInstallAppButton() {
+  const canShowManualInstall = isIosBrowser() || 'serviceWorker' in navigator;
+  installAppBtn.hidden = isStandaloneApp() || (!deferredInstallPrompt && !canShowManualInstall);
+}
+
+window.addEventListener('beforeinstallprompt', (event) => {
+  // Keep the install prompt behind a deliberate GhostChat button.
+  event.preventDefault();
+  deferredInstallPrompt = event;
+  updateInstallAppButton();
+});
+
+window.addEventListener('appinstalled', () => {
+  deferredInstallPrompt = null;
+  installAppBtn.hidden = true;
+});
+
+installAppBtn.addEventListener('click', async () => {
+  if (deferredInstallPrompt) {
+    deferredInstallPrompt.prompt();
+    await deferredInstallPrompt.userChoice;
+    deferredInstallPrompt = null;
+    updateInstallAppButton();
+    return;
+  }
+
+  if (pwaInstallDialog.showModal) pwaInstallDialog.showModal();
+});
+
+pwaInstallClose.addEventListener('click', () => pwaInstallDialog.close());
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => {
+      // Chat remains usable when service workers are unavailable.
+    });
+  });
+}
 
 function updateViewportHeight() {
   const viewportHeight = window.visualViewport?.height || window.innerHeight;
@@ -133,6 +190,7 @@ function updateLangToggleLabel() {
 
 window.I18N.applyStatic();
 updateLangToggleLabel();
+updateInstallAppButton();
 
 langToggle.addEventListener('click', () => {
   window.I18N.setLang(window.I18N.lang === 'vi' ? 'en' : 'vi');

@@ -25,7 +25,7 @@ Mỗi khách truy cập được gán một `clientId` ngẫu nhiên lưu trong 
 | Gợi ý      | Câu mở lời (icebreaker) theo sở thích chung và ngôn ngữ                                                                                                                              |
 | Hàng đợi   | Hiển thị số người đang chờ, ước tính thời gian chờ, số người trực tuyến                                                                                                              |
 | Cảm xúc    | Emoji picker khi soạn tin; thả reaction emoji lên từng tin nhắn                                                                                                                      |
-| Giao diện  | Chuyển dark/light theme; đổi ngôn ngữ giao diện Việt/Anh (i18n); mobile-first với khung chat theo bàn phím và vùng an toàn màn hình                                                  |
+| Giao diện  | Chuyển dark/light theme; đổi ngôn ngữ giao diện Việt/Anh (i18n); mobile-first với khung chat theo bàn phím và vùng an toàn màn hình; cài như PWA lên màn hình chính                  |
 | Thông báo  | Báo trình duyệt khi được ghép cặp/có tin mới lúc tab ẩn; badge + nút xem tin mới khi đang đọc phía trên                                                                              |
 | An toàn    | Bỏ qua (skip), chặn (block) có xác nhận, bỏ chặn, báo cáo với lý do, đánh giá sau chat                                                                                               |
 | Phản hồi   | Đánh giá sau chat kèm lý do nhanh khi không phù hợp; admin xem tỷ lệ, xu hướng 14 ngày, lý do không phù hợp và lọc chat không an toàn                                                |
@@ -67,6 +67,9 @@ anon-chat/
 │   ├── script.js             # Logic client
 │   ├── i18n.js               # Hệ thống đa ngôn ngữ (Việt/Anh)
 │   ├── style.css             # Toàn bộ style + biến theme
+│   ├── manifest.webmanifest  # Tên, màu sắc, biểu tượng và chế độ PWA
+│   ├── sw.js                 # Bộ nhớ đệm offline cho app shell (không cache API/socket)
+│   ├── icons/                # Biểu tượng PNG 192x192 và 512x512 cho PWA
 │   ├── admin.html            # Trang kiểm duyệt
 │   ├── admin.js              # Logic trang kiểm duyệt
 │   └── admin.css             # Style trang kiểm duyệt
@@ -94,7 +97,7 @@ anon-chat/
 
 **Luồng chính của một phiên:**
 
-1. Người dùng nhập biệt danh, sở thích, ngôn ngữ, tích xác nhận 18+ và Quy tắc Cộng đồng, bấm "Bắt đầu".
+1. Người dùng mở GhostChat trên trình duyệt hoặc từ biểu tượng PWA, nhập biệt danh, sở thích, ngôn ngữ, tích xác nhận 18+ và Quy tắc Cộng đồng, bấm "Bắt đầu".
 2. Client mở kết nối Socket.IO và phát sự kiện `login` với hồ sơ + `clientId` + danh sách đã chặn.
 3. Server validate, kiểm tra lệnh cấm, rồi đưa socket vào **hàng đợi** (`waitingQueue`).
 4. Mỗi 2 giây (và mỗi khi có người mới vào hàng đợi), server chạy thuật toán ghép cặp.
