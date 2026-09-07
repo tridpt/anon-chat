@@ -18,20 +18,21 @@ Mỗi khách truy cập được gán một `clientId` ngẫu nhiên lưu trong 
 
 ## 2. Tính năng
 
-| Nhóm       | Tính năng                                                                                               |
-| ---------- | ------------------------------------------------------------------------------------------------------- |
-| Ghép cặp   | Ghép theo sở thích chung, ưu tiên ngôn ngữ tương thích (Việt/Anh/bất kỳ), fallback sau 5 giây chờ       |
-| Trò chuyện | Nhắn tin thời gian thực, chỉ báo "đang gõ", âm thanh thông báo                                          |
-| Gợi ý      | Câu mở lời (icebreaker) theo sở thích chung và ngôn ngữ                                                 |
-| Hàng đợi   | Hiển thị số người đang chờ, ước tính thời gian chờ, số người trực tuyến                                 |
-| Cảm xúc    | Emoji picker khi soạn tin; thả reaction emoji lên từng tin nhắn                                         |
-| Giao diện  | Chuyển dark/light theme; đổi ngôn ngữ giao diện Việt/Anh (i18n)                                         |
-| Thông báo  | Báo trình duyệt khi được ghép cặp/có tin mới lúc tab ẩn; badge + nút xem tin mới khi đang đọc phía trên |
-| An toàn    | Bỏ qua (skip), chặn (block) có xác nhận, bỏ chặn, báo cáo với lý do, đánh giá sau chat                  |
-| Kiểm duyệt | Lọc từ ngữ xấu, giới hạn link, tự động cấm theo số report; trang `/admin`                               |
-| Khiếu nại  | Người bị ban gửi appeal; moderator duyệt/từ chối, duyệt sẽ gỡ ban và giữ liên kết report/transcript     |
-| Vận hành   | Endpoint `/health` với số liệu; ban lưu bền vững qua restart                                            |
-| Mở rộng    | Redis adapter tùy chọn cho nhiều instance                                                               |
+| Nhóm       | Tính năng                                                                                                                                                        |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Ghép cặp   | Ghép theo sở thích chung, ưu tiên ngôn ngữ tương thích (Việt/Anh/bất kỳ), ưu tiên mềm theo phản hồi, cooldown cặp không phù hợp 30 ngày, fallback sau 5 giây chờ |
+| Trò chuyện | Nhắn tin thời gian thực, chỉ báo "đang gõ", âm thanh thông báo                                                                                                   |
+| Gợi ý      | Câu mở lời (icebreaker) theo sở thích chung và ngôn ngữ                                                                                                          |
+| Hàng đợi   | Hiển thị số người đang chờ, ước tính thời gian chờ, số người trực tuyến                                                                                          |
+| Cảm xúc    | Emoji picker khi soạn tin; thả reaction emoji lên từng tin nhắn                                                                                                  |
+| Giao diện  | Chuyển dark/light theme; đổi ngôn ngữ giao diện Việt/Anh (i18n)                                                                                                  |
+| Thông báo  | Báo trình duyệt khi được ghép cặp/có tin mới lúc tab ẩn; badge + nút xem tin mới khi đang đọc phía trên                                                          |
+| An toàn    | Bỏ qua (skip), chặn (block) có xác nhận, bỏ chặn, báo cáo với lý do, đánh giá sau chat                                                                           |
+| Phản hồi   | Admin xem tỷ lệ đánh giá, xu hướng 14 ngày, và lọc nhanh các transcript bị gắn cờ không an toàn                                                                  |
+| Kiểm duyệt | Lọc từ ngữ xấu, giới hạn link, tự động cấm theo số report; trang `/admin`                                                                                        |
+| Khiếu nại  | Người bị ban gửi appeal; moderator duyệt/từ chối, duyệt sẽ gỡ ban và giữ liên kết report/transcript                                                              |
+| Vận hành   | Endpoint `/health` với số liệu; ban lưu bền vững qua restart                                                                                                     |
+| Mở rộng    | Redis adapter tùy chọn cho nhiều instance                                                                                                                        |
 
 ---
 
@@ -259,6 +260,8 @@ Các bước:
    - (b) Có sở thích chung (bỏ qua ngôn ngữ).
    - (c) Ngôn ngữ tương thích _và_ một trong hai đã chờ đủ **5 giây**.
    - (d) Bất kỳ ai (đã chờ đủ 5 giây) — fallback cuối.
+   - Trong từng tầng, điểm chất lượng riêng tư làm tiêu chí phụ: chỉ có hiệu lực sau tối thiểu 2 phản hồi từ đối tác, `positive` tăng ưu tiên và `not_a_match` giảm ưu tiên; cùng điểm vẫn theo thứ tự vào hàng đợi. Phản hồi `unsafe` không được dùng để xếp hạng.
+   - Nếu một bên chọn `not_a_match`, cặp hai `clientId` được đưa vào cooldown hai chiều 30 ngày. Điều này chỉ loại đúng cặp đó khỏi `canMatch`; mỗi người vẫn được ghép với người khác.
 3. **Điều kiện ghép** (`canMatch`): khác `clientId`, và **không bên nào đã chặn bên kia**.
 4. **Tương thích ngôn ngữ** (`hasCompatibleLanguage`): một trong hai là `any`, hoặc cùng ngôn ngữ.
 5. Khi ghép: tạo `roomId` (UUID), cả hai `join(roomId)`, gán `currentRoom` và `partner` cho nhau, phát `matched` kèm `sharedInterests`, tăng `totalMatches`, cập nhật EMA thời gian chờ.
@@ -378,6 +381,7 @@ Cờ trạng thái quan trọng: `hasActiveSession`, `isInChat`, `currentPartner
 - Tab **Team** chỉ hiện với admin để tạo account, đổi role/mật khẩu, và bật/tắt moderator.
 - `viewer` chỉ đọc; `moderator` có thể xử lý report, gỡ ban, và xóa transcript; `admin` có toàn quyền.
 - Dialog sau khi kết thúc chat cho phép chọn đánh giá, ghi chú tùy chọn, và với đánh giá không an toàn có thể tạo report + block gắn với transcript.
+- Điểm ghép cặp mềm được tính từ phản hồi đối tác: cần ít nhất 2 lượt `positive`/`not_a_match`, giới hạn trong khoảng -5..5, và chỉ dùng để phá hòa trong cùng một tầng tương thích. Người mới hoặc chưa đủ dữ liệu giữ điểm trung lập; `unsafe` không tham gia xếp hạng.
 - Có nút đăng xuất, tự khôi phục phiên khi tải lại, và tự yêu cầu đăng nhập lại khi phiên hết hạn.
 - Liệt kê báo cáo, lọc theo trạng thái, mỗi báo cáo là một thẻ cho phép đổi `status` và ghi `moderationNote`, lưu qua `PATCH /api/admin/reports/:id`.
 - Tab **Appeals** hiển thị hàng đợi khiếu nại, lý do và snapshot lệnh cấm, mở transcript/report liên quan,

@@ -27,6 +27,7 @@ const chatFilterForm = document.getElementById('chat-filter-form');
 const chatSearchInput = document.getElementById('chat-search');
 const chatFromInput = document.getElementById('chat-from');
 const chatToInput = document.getElementById('chat-to');
+const chatFeedbackFilter = document.getElementById('chat-feedback-filter');
 const exportJsonButton = document.getElementById('export-json');
 const exportCsvButton = document.getElementById('export-csv');
 const chatsContainer = document.getElementById('chats');
@@ -47,6 +48,16 @@ const storedChatsStat = document.getElementById('stat-stored-chats');
 const chatRatingsStat = document.getElementById('stat-chat-ratings');
 const chatRatingCaption = document.getElementById('stat-chat-rating-caption');
 const unsafeRatingsStat = document.getElementById('stat-unsafe-ratings');
+const feedbackDashboardSummary = document.getElementById('feedback-dashboard-summary');
+const feedbackPositiveCount = document.getElementById('feedback-positive-count');
+const feedbackNotAMatchCount = document.getElementById('feedback-not-a-match-count');
+const feedbackUnsafeCount = document.getElementById('feedback-unsafe-count');
+const feedbackPositiveMeter = document.getElementById('feedback-positive-meter');
+const feedbackNotAMatchMeter = document.getElementById('feedback-not-a-match-meter');
+const feedbackUnsafeMeter = document.getElementById('feedback-unsafe-meter');
+const feedbackTrendTotal = document.getElementById('feedback-trend-total');
+const feedbackTrendChart = document.getElementById('feedback-trend-chart');
+const viewUnsafeChatsButton = document.getElementById('view-unsafe-chats');
 const activeBansStat = document.getElementById('stat-active-bans');
 const pendingAppealsStat = document.getElementById('stat-pending-appeals');
 const refreshModeratorsButton = document.getElementById('refresh-moderators');
@@ -244,6 +255,48 @@ function updateFeedbackStats(summary = {}) {
   chatRatingCaption.innerText = total
     ? `${Math.round((positive / total) * 100)}% marked the chat as good`
     : 'Feedback submitted by users';
+}
+
+function percentOfTotal(value, total) {
+  return total > 0 ? Math.round((value / total) * 100) : 0;
+}
+
+function updateFeedbackDashboard(analytics = {}) {
+  const summary = analytics.periodSummary || analytics.summary || {};
+  const allTime = analytics.summary || {};
+  const total = Number(summary.total) || 0;
+  const positive = Number(summary.positive) || 0;
+  const notAMatch = Number(summary.not_a_match) || 0;
+  const unsafe = Number(summary.unsafe) || 0;
+  feedbackPositiveCount.innerText = `${positive} (${percentOfTotal(positive, total)}%)`;
+  feedbackNotAMatchCount.innerText = `${notAMatch} (${percentOfTotal(notAMatch, total)}%)`;
+  feedbackUnsafeCount.innerText = `${unsafe} (${percentOfTotal(unsafe, total)}%)`;
+  feedbackPositiveMeter.style.width = `${percentOfTotal(positive, total)}%`;
+  feedbackNotAMatchMeter.style.width = `${percentOfTotal(notAMatch, total)}%`;
+  feedbackUnsafeMeter.style.width = `${percentOfTotal(unsafe, total)}%`;
+  feedbackDashboardSummary.innerText = total
+    ? `${total} rating${total === 1 ? '' : 's'} in this period · ${summary.chatsWithUnsafe || 0} chat${summary.chatsWithUnsafe === 1 ? '' : 's'} flagged unsafe (${allTime.total || 0} all time).`
+    : 'No ratings have been submitted yet.';
+
+  const daily = Array.isArray(analytics.daily) ? analytics.daily : [];
+  const trendTotal = Number(summary.total) || 0;
+  const maxDaily = Math.max(...daily.map((entry) => Number(entry.total) || 0), 1);
+  feedbackTrendTotal.innerText = `${trendTotal} in ${analytics.days || 14} days`;
+  feedbackTrendChart.innerHTML = '';
+  feedbackTrendChart.setAttribute(
+    'aria-label',
+    trendTotal
+      ? `${trendTotal} ratings received over the last ${analytics.days || 14} days`
+      : 'No feedback trend data',
+  );
+  daily.forEach((entry) => {
+    const bar = document.createElement('div');
+    bar.className = 'feedback-trend-bar';
+    bar.style.height = `${Math.max(4, Math.round(((Number(entry.total) || 0) / maxDaily) * 100))}%`;
+    bar.title = `${entry.date}: ${entry.total} rating${entry.total === 1 ? '' : 's'}, ${entry.unsafe || 0} unsafe`;
+    if (entry.unsafe) bar.classList.add('has-unsafe');
+    feedbackTrendChart.appendChild(bar);
+  });
 }
 
 function getSavedTab() {
@@ -1287,6 +1340,7 @@ async function loadOverview() {
     activeBansStat.innerText = String(bansResult.bans.length);
     storedChatsStat.innerText = String(chatsResult.total);
     updateFeedbackStats(feedbackResult.summary);
+    updateFeedbackDashboard(feedbackResult);
     pendingAppealsStat.innerText = String(appealsResult.appeals.length);
     setNotificationCount(
       'reports',
@@ -1376,6 +1430,7 @@ async function loadChats() {
     if (chatSearchInput.value.trim()) query.set('q', chatSearchInput.value.trim());
     if (chatFromInput.value) query.set('from', chatFromInput.value);
     if (chatToInput.value) query.set('to', chatToInput.value);
+    if (chatFeedbackFilter.value) query.set('feedback', chatFeedbackFilter.value);
     const queryString = query.toString();
     const result = await api(`/api/admin/chats?${queryString}`);
     const { chats } = result;
@@ -1402,6 +1457,7 @@ async function exportChats(format) {
   if (chatSearchInput.value.trim()) query.set('q', chatSearchInput.value.trim());
   if (chatFromInput.value) query.set('from', chatFromInput.value);
   if (chatToInput.value) query.set('to', chatToInput.value);
+  if (chatFeedbackFilter.value) query.set('feedback', chatFeedbackFilter.value);
 
   try {
     setStatus(`Preparing ${format.toUpperCase()} export...`);
@@ -1559,6 +1615,11 @@ chatFilterForm.addEventListener('submit', (event) => {
   event.preventDefault();
   chatPage = 1;
   loadChats();
+});
+viewUnsafeChatsButton.addEventListener('click', () => {
+  chatFeedbackFilter.value = 'unsafe';
+  chatPage = 1;
+  setActiveTab('chats');
 });
 refreshChatsButton.addEventListener('click', loadChats);
 previousChatPage.addEventListener('click', () => {

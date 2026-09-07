@@ -240,6 +240,45 @@
               <span class="stat-caption">Waiting for a decision</span>
             </article>
           </section>
+          <section class="feedback-dashboard" aria-labelledby="feedback-dashboard-title">
+            <div class="feedback-dashboard-heading">
+              <div>
+                <span class="section-kicker">Feedback pulse</span>
+                <h2 id="feedback-dashboard-title">Chat quality in the last 14 days</h2>
+                <p id="feedback-dashboard-summary">Waiting for rating data.</p>
+              </div>
+              <button id="view-unsafe-chats" type="button" class="danger-button">
+                Review unsafe chats
+              </button>
+            </div>
+            <div class="feedback-dashboard-grid">
+              <section class="feedback-breakdown" aria-label="Rating breakdown">
+                <div class="feedback-breakdown-row positive">
+                  <span>Good</span><strong id="feedback-positive-count">0</strong>
+                  <div class="feedback-meter"><span id="feedback-positive-meter"></span></div>
+                </div>
+                <div class="feedback-breakdown-row neutral">
+                  <span>Not a fit</span><strong id="feedback-not-a-match-count">0</strong>
+                  <div class="feedback-meter"><span id="feedback-not-a-match-meter"></span></div>
+                </div>
+                <div class="feedback-breakdown-row unsafe">
+                  <span>Unsafe</span><strong id="feedback-unsafe-count">0</strong>
+                  <div class="feedback-meter"><span id="feedback-unsafe-meter"></span></div>
+                </div>
+              </section>
+              <section class="feedback-trend" aria-label="Daily rating trend">
+                <div class="feedback-trend-labels">
+                  <span>Ratings by day</span><span id="feedback-trend-total">0 total</span>
+                </div>
+                <div
+                  id="feedback-trend-chart"
+                  class="feedback-trend-chart"
+                  role="img"
+                  aria-label="No feedback trend data"
+                ></div>
+              </section>
+            </div>
+          </section>
         </section>
 
         <section
@@ -478,6 +517,13 @@
               <input id="chat-from" type="date" aria-label="From date" />
               <label class="sr-only" for="chat-to">To date</label>
               <input id="chat-to" type="date" aria-label="To date" />
+              <label class="sr-only" for="chat-feedback-filter">Feedback status</label>
+              <select id="chat-feedback-filter" aria-label="Feedback status">
+                <option value="">All feedback</option>
+                <option value="unsafe">Unsafe only</option>
+                <option value="rated">Rated chats</option>
+                <option value="unrated">No rating yet</option>
+              </select>
               <button type="submit">Search archive</button>
             </form>
             <section id="chats" class="report-list" aria-live="polite"></section>
@@ -491,6 +537,6 @@
       </div>
     </main>
 
-    <script src="admin.js?v=14"></script>
+    <script src="admin.js?v=15"></script>
   </body>
 </html>

@@ -9,6 +9,10 @@ Anonymous, one-on-one chat with language-compatible matching. GhostChat does not
 ## Features
 
 - Match two people while prioritizing compatible Vietnamese, English, or any-language preferences.
+- Within the same compatibility tier, softly prioritize visitors with enough positive partner
+  feedback and deprioritize repeated "not a match" feedback; unrated visitors stay neutral.
+- Avoid rematching the same pair for 30 days after either person selects "not a match", while
+  leaving both visitors eligible to chat with others.
 - Offer localized icebreaker prompts after a match, based on shared interests when possible.
 - Show the live number of people waiting and a wait-time estimate based on recent matches.
 - Require self-attested 18+ and Community Rules acceptance before joining the queue.
@@ -16,6 +20,7 @@ Anonymous, one-on-one chat with language-compatible matching. GhostChat does not
 - Insert emojis from a built-in picker and switch between dark and light themes (saved per browser).
 - Show an expiring partner-typing indicator, preserve your reading position for new messages, and provide sound/browser notifications when the tab is hidden.
 - Ask for a post-chat rating (good fit, not a match, or unsafe) with an optional comment; unsafe feedback can report and block the partner after the chat ends.
+- View a 14-day feedback pulse in the admin Overview, including rating mix, daily trend, and a direct unsafe-chat review filter.
 - Switch the interface language between English and Vietnamese; the choice is detected from the browser and saved per browser.
 - Report a current partner with a reason, then review and resolve reports in `/admin`.
 - Keep resolved reports in a separate archive and apply moderator actions such as a 24-hour chat block or permanent ban.

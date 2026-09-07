@@ -36,6 +36,13 @@ and the project follows [Semantic Versioning](https://semver.org/).
   after server acknowledgement.
 - Post-chat ratings with optional comments, admin feedback totals, and a safe report-and-block
   flow linked to the ended transcript.
+- A feedback dashboard with rating mix, a 14-day daily trend, and one-click filtering of unsafe
+  transcripts for moderator review.
+- Matchmaking now softly prefers visitors with enough positive partner feedback and moves
+  repeated "not a match" profiles later within the same compatibility tier, while keeping
+  unrated visitors neutral and preserving queue order for ties.
+- A "not a match" rating now places that exact pair in a durable 30-day rematch cooldown;
+  the cooldown is bidirectional and does not restrict either visitor from other matches.
 
 ### Changed
 

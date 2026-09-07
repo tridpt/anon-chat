@@ -165,6 +165,10 @@ const REPORT_STATUSES = new Set(['new', 'reviewed', 'resolved']);
 const APPEAL_STATUSES = new Set(['pending', 'approved', 'rejected']);
 const MODERATION_ACTIONS = new Set(['none', 'chat_block', 'permanent_ban']);
 const CHAT_FEEDBACK_RATINGS = new Set(['positive', 'not_a_match', 'unsafe']);
+const CHAT_FEEDBACK_FILTERS = new Set(['', 'unsafe', 'rated', 'unrated']);
+const MATCH_QUALITY_MIN_RATINGS = 2;
+const MATCH_QUALITY_MAX_SCORE = 5;
+const MATCH_NOT_A_MATCH_COOLDOWN_MS = 30 * 24 * 60 * 60 * 1000;
 const MODERATOR_ROLES = new Set(['admin', 'moderator', 'viewer']);
 const CHAT_BLOCK_DURATION_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_ADMIN_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
@@ -179,6 +183,38 @@ const RESERVED_MODERATOR_USERNAMES = new Set(['env-admin', 'system']);
 const DUMMY_MODERATOR_CREDENTIAL = { passwordSalt: '0'.repeat(32), passwordHash: '0'.repeat(128) };
 const LANGUAGES = new Set(['any', 'vi', 'en']);
 const REACTION_EMOJIS = new Set(['👍', '❤️', '😂', '😮', '😢', '🔥']);
+
+// This is a small, private queue preference rather than a reputation system. It only uses
+// partner feedback, requires enough signals to matter, and keeps new visitors neutral.
+function calculateMatchQualityScore({ positive = 0, not_a_match: notAMatch = 0 } = {}) {
+  const positiveCount = Number.isSafeInteger(positive) && positive > 0 ? positive : 0;
+  const notAMatchCount = Number.isSafeInteger(notAMatch) && notAMatch > 0 ? notAMatch : 0;
+  if (positiveCount + notAMatchCount < MATCH_QUALITY_MIN_RATINGS) return 0;
+  return Math.max(
+    -MATCH_QUALITY_MAX_SCORE,
+    Math.min(MATCH_QUALITY_MAX_SCORE, positiveCount - notAMatchCount),
+  );
+}
+
+// Keep queue order as the tie-breaker, so a quality preference never starves a visitor.
+function findPreferredMatchIndex(entries, startIndex, acceptsCandidate) {
+  let bestIndex = -1;
+  let bestScore = Number.NEGATIVE_INFINITY;
+  for (let index = startIndex; index < entries.length; index++) {
+    const candidate = entries[index];
+    if (!acceptsCandidate(candidate, index)) continue;
+    const score = Number.isFinite(candidate.matchQualityScore) ? candidate.matchQualityScore : 0;
+    if (score > bestScore) {
+      bestIndex = index;
+      bestScore = score;
+    }
+  }
+  return bestIndex;
+}
+
+function makeClientPairKey(clientId1, clientId2) {
+  return [clientId1, clientId2].sort().join(':');
+}
 
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -466,6 +502,11 @@ function parseChatDateFilter(value, endOfDay = false) {
     return parsed + 24 * 60 * 60 * 1000 - 1;
   }
   return parsed;
+}
+
+function parseChatFeedbackFilter(value) {
+  const filter = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return CHAT_FEEDBACK_FILTERS.has(filter) ? filter : null;
 }
 
 function csvCell(value) {
@@ -950,13 +991,18 @@ function createChatStore(dataDirectory, retentionDays = 30) {
         return {
           feedback: copyValue(chat.feedback.at(-1)),
           summary: feedbackSummary(chat).summary,
+          partnerClientId: [...participantIds].find((clientId) => clientId !== feedback.clientId),
         };
       }),
-    list: (limit = 50, { query = '', from = null, to = null } = {}, offset = 0) =>
+    list: (limit = 50, { query = '', from = null, to = null, feedback = '' } = {}, offset = 0) =>
       enqueue(async () => {
         await initialize();
         const normalizedQuery = query.toLowerCase();
         const matchingChats = chats.filter((chat) => {
+          const chatFeedback = feedbackSummary(chat);
+          if (feedback === 'unsafe' && chatFeedback.summary.unsafe === 0) return false;
+          if (feedback === 'rated' && chatFeedback.summary.total === 0) return false;
+          if (feedback === 'unrated' && chatFeedback.summary.total > 0) return false;
           const startedAt = Date.parse(chat.startedAt);
           const lastActivityAt = Date.parse(chat.lastActivityAt || chat.startedAt);
           if (from !== null && !Number.isNaN(lastActivityAt) && lastActivityAt < from) return false;
@@ -1016,6 +1062,109 @@ function createChatStore(dataDirectory, retentionDays = 30) {
           if (chatSummary.unsafe > 0) summary.chatsWithUnsafe += 1;
         });
         return summary;
+      }),
+    getMatchQualityScore: (clientId) =>
+      enqueue(async () => {
+        await initialize();
+        if (!isClientId(clientId)) return 0;
+
+        const received = { positive: 0, not_a_match: 0 };
+        chats.forEach((chat) => {
+          const participantIds = [
+            ...new Set(
+              (chat.participants ?? [])
+                .map((participant) => participant?.clientId)
+                .filter(isClientId),
+            ),
+          ];
+          if (participantIds.length !== 2 || !participantIds.includes(clientId)) return;
+
+          feedbackSummary(chat).feedback.forEach((feedback) => {
+            const partnerId = participantIds.find((id) => id !== feedback.clientId);
+            if (partnerId !== clientId) return;
+            if (feedback.rating === 'positive') received.positive += 1;
+            if (feedback.rating === 'not_a_match') received.not_a_match += 1;
+          });
+        });
+        return calculateMatchQualityScore(received);
+      }),
+    getRecentNotAMatchPairs: (cooldownMs, now = Date.now()) =>
+      enqueue(async () => {
+        await initialize();
+        const pairExpiries = new Map();
+        const duration = Number.isFinite(cooldownMs) && cooldownMs > 0 ? cooldownMs : 0;
+        if (!duration) return [];
+
+        chats.forEach((chat) => {
+          const participantIds = [
+            ...new Set(
+              (chat.participants ?? [])
+                .map((participant) => participant?.clientId)
+                .filter(isClientId),
+            ),
+          ];
+          if (participantIds.length !== 2) return;
+
+          feedbackSummary(chat).feedback.forEach((feedback) => {
+            if (feedback.rating !== 'not_a_match') return;
+            const createdAt = Date.parse(feedback.createdAt);
+            if (Number.isNaN(createdAt)) return;
+            const expiresAt = createdAt + duration;
+            if (expiresAt <= now) return;
+            const key = makeClientPairKey(participantIds[0], participantIds[1]);
+            pairExpiries.set(key, Math.max(pairExpiries.get(key) ?? 0, expiresAt));
+          });
+        });
+
+        return [...pairExpiries.entries()].map(([key, expiresAt]) => ({ key, expiresAt }));
+      }),
+    getFeedbackAnalytics: (requestedDays = 14) =>
+      enqueue(async () => {
+        await initialize();
+        const days = Math.min(Math.max(Number.parseInt(requestedDays, 10) || 14, 7), 90);
+        const dayMs = 24 * 60 * 60 * 1000;
+        const start = new Date();
+        start.setUTCHours(0, 0, 0, 0);
+        const startMs = start.getTime() - (days - 1) * dayMs;
+        const daily = Array.from({ length: days }, (_, index) => ({
+          date: new Date(startMs + index * dayMs).toISOString().slice(0, 10),
+          total: 0,
+          positive: 0,
+          not_a_match: 0,
+          unsafe: 0,
+        }));
+        const dailyByDate = new Map(daily.map((entry) => [entry.date, entry]));
+        const summary = { total: 0, positive: 0, not_a_match: 0, unsafe: 0, chatsWithUnsafe: 0 };
+        const periodSummary = {
+          total: 0,
+          positive: 0,
+          not_a_match: 0,
+          unsafe: 0,
+          chatsWithUnsafe: 0,
+        };
+        chats.forEach((chat) => {
+          const entries = feedbackSummary(chat).feedback;
+          let chatHasUnsafe = false;
+          let periodChatHasUnsafe = false;
+          entries.forEach((entry) => {
+            summary.total += 1;
+            summary[entry.rating] += 1;
+            if (entry.rating === 'unsafe') chatHasUnsafe = true;
+            const createdAt = Date.parse(entry.createdAt);
+            if (Number.isNaN(createdAt) || createdAt < startMs) return;
+            periodSummary.total += 1;
+            periodSummary[entry.rating] += 1;
+            if (entry.rating === 'unsafe') periodChatHasUnsafe = true;
+            const day = dailyByDate.get(new Date(createdAt).toISOString().slice(0, 10));
+            if (day) {
+              day.total += 1;
+              day[entry.rating] += 1;
+            }
+          });
+          if (periodChatHasUnsafe) periodSummary.chatsWithUnsafe += 1;
+          if (chatHasUnsafe) summary.chatsWithUnsafe += 1;
+        });
+        return { days, summary, periodSummary, daily };
       }),
     remove: (id) =>
       enqueue(async () => {
@@ -1367,6 +1516,8 @@ function createChatServer({
   let totalMatches = 0;
   const recentReportsByClient = new Map();
   const bannedClients = new Map();
+  const notAMatchCooldowns = new Map();
+  let notAMatchCooldownsReady = false;
 
   // --- Shared (distributed) matchmaking state ---------------------------------------------
   // Opt-in: active only once a Redis command client connects (REDIS_URL set). While inactive,
@@ -2629,7 +2780,9 @@ function createChatServer({
   });
   app.get('/api/admin/chat-feedback', requireAdmin, async (request, response) => {
     try {
-      response.json({ summary: await chatStore.getFeedbackSummary() });
+      const requestedDays = Number.parseInt(request.query.days, 10);
+      const days = Number.isFinite(requestedDays) ? requestedDays : 14;
+      response.json(await chatStore.getFeedbackAnalytics(days));
     } catch (error) {
       logError(error);
       response.status(500).json({ error: 'Could not load chat feedback.' });
@@ -2748,7 +2901,16 @@ function createChatServer({
       }
       const query =
         typeof request.query.q === 'string' ? cleanText(request.query.q).slice(0, 100) : '';
-      const result = await chatStore.list(pageSize, { query, from, to }, (page - 1) * pageSize);
+      const feedback = parseChatFeedbackFilter(request.query.feedback);
+      if (feedback === null) {
+        response.status(400).json({ error: 'Invalid feedback filter.' });
+        return;
+      }
+      const result = await chatStore.list(
+        pageSize,
+        { query, from, to, feedback },
+        (page - 1) * pageSize,
+      );
       response.json({
         chats: result.chats,
         page,
@@ -2771,7 +2933,12 @@ function createChatServer({
       }
       const query =
         typeof request.query.q === 'string' ? cleanText(request.query.q).slice(0, 100) : '';
-      const chats = (await chatStore.list(1000, { query, from, to })).chats;
+      const feedback = parseChatFeedbackFilter(request.query.feedback);
+      if (feedback === null) {
+        response.status(400).json({ error: 'Invalid feedback filter.' });
+        return;
+      }
+      const chats = (await chatStore.list(1000, { query, from, to, feedback })).chats;
       const format = request.query.format === 'csv' ? 'csv' : 'json';
       response.set('Content-Disposition', `attachment; filename="ghostchat-chats.${format}"`);
       if (format === 'csv') {
@@ -2875,6 +3042,27 @@ function createChatServer({
         : averageMatchWaitMs * 0.75 + averageWaitForPair * 0.25;
   }
 
+  function setNotAMatchCooldown(clientId1, clientId2, createdAt = Date.now()) {
+    if (!isClientId(clientId1) || !isClientId(clientId2) || clientId1 === clientId2) return;
+    const timestamp = typeof createdAt === 'string' ? Date.parse(createdAt) : createdAt;
+    if (!Number.isFinite(timestamp)) return;
+    const expiresAt = timestamp + MATCH_NOT_A_MATCH_COOLDOWN_MS;
+    if (expiresAt <= Date.now()) return;
+    const key = makeClientPairKey(clientId1, clientId2);
+    notAMatchCooldowns.set(key, Math.max(notAMatchCooldowns.get(key) ?? 0, expiresAt));
+  }
+
+  function isNotAMatchCooldownActive(clientId1, clientId2, now = Date.now()) {
+    const key = makeClientPairKey(clientId1, clientId2);
+    const expiresAt = notAMatchCooldowns.get(key);
+    if (!expiresAt) return false;
+    if (expiresAt <= now) {
+      notAMatchCooldowns.delete(key);
+      return false;
+    }
+    return true;
+  }
+
   function enqueue(socket) {
     if (socket.disconnected || socket.currentRoom) return false;
     if (socket.isQueued) return true;
@@ -2897,74 +3085,76 @@ function createChatServer({
     return true;
   }
 
+  async function refreshQueuedMatchQuality(clientId) {
+    const score = await chatStore.getMatchQualityScore(clientId);
+    if (!distributedEnabled()) {
+      for (const socket of waitingQueue) {
+        if (socket.clientId === clientId) socket.matchQualityScore = score;
+      }
+      return;
+    }
+
+    const entries = await redisCmd.hGetAll(REDIS_KEYS.queue);
+    await Promise.all(
+      Object.entries(entries).flatMap(([socketId, rawEntry]) => {
+        try {
+          const entry = JSON.parse(rawEntry);
+          if (entry.clientId !== clientId) return [];
+          entry.matchQualityScore = score;
+          return [redisCmd.hSet(REDIS_KEYS.queue, socketId, JSON.stringify(entry))];
+        } catch {
+          return [];
+        }
+      }),
+    );
+  }
+
   function getBestMatchIndex(user1, startIndex, now) {
-    for (let index = startIndex; index < waitingQueue.length; index++) {
-      const user2 = waitingQueue[index];
-      if (user2.disconnected || !canMatch(user1, user2)) continue;
-
-      const hasSharedInterest = user1.interests.some((interest) =>
-        user2.interests.includes(interest),
+    const sharesInterest = (user2) =>
+      user1.interests.some((interest) => user2.interests.includes(interest));
+    const compatible = (user2) => !user2.disconnected && canMatch(user1, user2);
+    const preferred = (acceptsCandidate) =>
+      findPreferredMatchIndex(
+        waitingQueue,
+        startIndex,
+        (user2) => compatible(user2) && acceptsCandidate(user2),
       );
-      if (hasSharedInterest && hasCompatibleLanguage(user1, user2)) return index;
-    }
 
-    for (let index = startIndex; index < waitingQueue.length; index++) {
-      const user2 = waitingQueue[index];
-      if (user2.disconnected || !canMatch(user1, user2)) continue;
+    let matchIndex = preferred(
+      (user2) => sharesInterest(user2) && hasCompatibleLanguage(user1, user2),
+    );
+    if (matchIndex !== -1) return matchIndex;
 
-      const hasSharedInterest = user1.interests.some((interest) =>
-        user2.interests.includes(interest),
-      );
-      if (hasSharedInterest) return index;
-    }
+    matchIndex = preferred((user2) => sharesInterest(user2));
+    if (matchIndex !== -1) return matchIndex;
 
     // The public form no longer asks for interests, so language-compatible visitors
     // should not wait for the fallback timer just because both lists are empty.
-    for (let index = startIndex; index < waitingQueue.length; index++) {
-      const user2 = waitingQueue[index];
-      if (
-        !user2.disconnected &&
-        canMatch(user1, user2) &&
-        hasCompatibleLanguage(user1, user2) &&
-        (!user1.interests.length || !user2.interests.length)
-      )
-        return index;
-    }
+    matchIndex = preferred(
+      (user2) =>
+        hasCompatibleLanguage(user1, user2) && (!user1.interests.length || !user2.interests.length),
+    );
+    if (matchIndex !== -1) return matchIndex;
 
     const user1WaitedLongEnough = now - user1.joinTime >= LIMITS.fallbackMatchMs;
-    for (let index = startIndex; index < waitingQueue.length; index++) {
-      const user2 = waitingQueue[index];
-      const user2WaitedLongEnough =
-        !user2.disconnected && now - user2.joinTime >= LIMITS.fallbackMatchMs;
-      if (
-        !user2.disconnected &&
-        canMatch(user1, user2) &&
+    matchIndex = preferred(
+      (user2) =>
         hasCompatibleLanguage(user1, user2) &&
-        (user1WaitedLongEnough || user2WaitedLongEnough)
-      )
-        return index;
-    }
+        (user1WaitedLongEnough || now - user2.joinTime >= LIMITS.fallbackMatchMs),
+    );
+    if (matchIndex !== -1) return matchIndex;
 
-    for (let index = startIndex; index < waitingQueue.length; index++) {
-      const user2 = waitingQueue[index];
-      const user2WaitedLongEnough =
-        !user2.disconnected && now - user2.joinTime >= LIMITS.fallbackMatchMs;
-      if (
-        !user2.disconnected &&
-        canMatch(user1, user2) &&
-        (user1WaitedLongEnough || user2WaitedLongEnough)
-      )
-        return index;
-    }
-
-    return -1;
+    return preferred(
+      (user2) => user1WaitedLongEnough || now - user2.joinTime >= LIMITS.fallbackMatchMs,
+    );
   }
 
   function canMatch(user1, user2) {
     return (
       user1.clientId !== user2.clientId &&
       !user1.blockedClientIds.has(user2.clientId) &&
-      !user2.blockedClientIds.has(user1.clientId)
+      !user2.blockedClientIds.has(user1.clientId) &&
+      !isNotAMatchCooldownActive(user1.clientId, user2.clientId)
     );
   }
 
@@ -2975,6 +3165,7 @@ function createChatServer({
   }
 
   function matchUsers() {
+    if (!notAMatchCooldownsReady) return false;
     if (distributedEnabled()) {
       dMatch().catch(logError);
       return false;
@@ -3132,6 +3323,7 @@ function createChatServer({
       language: socket.language,
       interests: socket.interests,
       blockedClientIds: [...socket.blockedClientIds],
+      matchQualityScore: socket.matchQualityScore,
       joinTime: Date.now(),
     };
   }
@@ -3154,7 +3346,8 @@ function createChatServer({
     return (
       a.clientId !== b.clientId &&
       !a.blockedClientIds.includes(b.clientId) &&
-      !b.blockedClientIds.includes(a.clientId)
+      !b.blockedClientIds.includes(a.clientId) &&
+      !isNotAMatchCooldownActive(a.clientId, b.clientId)
     );
   }
 
@@ -3183,10 +3376,12 @@ function createChatServer({
     ];
 
     for (const accept of tiers) {
-      for (let i = start; i < entries.length; i++) {
-        if (matched.has(entries[i].socketId)) continue;
-        if (accept(entries[i])) return i;
-      }
+      const matchIndex = findPreferredMatchIndex(
+        entries,
+        start,
+        (entry) => !matched.has(entry.socketId) && accept(entry),
+      );
+      if (matchIndex !== -1) return matchIndex;
     }
     return -1;
   }
@@ -3406,18 +3601,19 @@ function createChatServer({
     socket.color = COLORS[Math.floor(Math.random() * COLORS.length)];
     socket.rateLimits = Object.create(null);
     socket.isQueued = false;
+    socket.isLoggingIn = false;
     socket.isTyping = false;
     socket.typingTimer = null;
 
     socket.on(
       'login',
-      safelyHandle(socket, (data) => {
+      safelyHandle(socket, async (data) => {
         if (isRateLimited(socket, 'login', LIMITS.loginRate)) {
           sendError(socket, 'rate_limited', 'Please wait a moment before trying again.');
           return;
         }
 
-        if (socket.isQueued || socket.currentRoom) {
+        if (socket.isQueued || socket.currentRoom || socket.isLoggingIn) {
           sendError(socket, 'invalid_state', 'You are already in a chat or waiting for a match.');
           return;
         }
@@ -3443,7 +3639,13 @@ function createChatServer({
         socket.clientId = parsed.value.clientId;
         socket.blockedClientIds = new Set(parsed.value.blockedClientIds);
         socket.hasLoggedIn = true;
-        enqueue(socket);
+        socket.isLoggingIn = true;
+        try {
+          socket.matchQualityScore = await chatStore.getMatchQualityScore(socket.clientId);
+          if (!socket.disconnected && !socket.isQueued && !socket.currentRoom) enqueue(socket);
+        } finally {
+          socket.isLoggingIn = false;
+        }
         log(`${socket.username} joined queue. Interests: ${socket.interests.join(',')}`);
       }),
     );
@@ -3619,6 +3821,16 @@ function createChatServer({
             chatId: parsed.value.chatId,
             rating: parsed.value.rating,
           });
+          if (parsed.value.rating === 'not_a_match' && result.partnerClientId) {
+            setNotAMatchCooldown(
+              socket.clientId,
+              result.partnerClientId,
+              result.feedback?.createdAt,
+            );
+          }
+          if (result.partnerClientId && parsed.value.rating !== 'unsafe') {
+            await refreshQueuedMatchQuality(result.partnerClientId).catch(logError);
+          }
           broadcastModerationUpdate('chats', 'updated');
         } catch (error) {
           logError(error);
@@ -3765,6 +3977,18 @@ function createChatServer({
   const matchingInterval = setInterval(matchUsers, 2000);
   matchingInterval.unref();
 
+  chatStore
+    .getRecentNotAMatchPairs(MATCH_NOT_A_MATCH_COOLDOWN_MS)
+    .then((pairs) => {
+      for (const pair of pairs) notAMatchCooldowns.set(pair.key, pair.expiresAt);
+      log(`Loaded ${pairs.length} active not-a-match cooldown(s) from storage.`);
+    })
+    .catch(logError)
+    .finally(() => {
+      notAMatchCooldownsReady = true;
+      matchUsers();
+    });
+
   let backupInterval = null;
   let backupQueue = Promise.resolve();
   let backupInProgress = false;
@@ -3861,4 +4085,11 @@ if (require.main === module) {
     });
 }
 
-module.exports = { createChatServer, LIMITS, loadProfanityList, buildProfanityMasker };
+module.exports = {
+  createChatServer,
+  LIMITS,
+  loadProfanityList,
+  buildProfanityMasker,
+  calculateMatchQualityScore,
+  findPreferredMatchIndex,
+};

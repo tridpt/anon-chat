@@ -4,7 +4,12 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { io } = require('socket.io-client');
-const { createChatServer, LIMITS } = require('../index');
+const {
+  createChatServer,
+  LIMITS,
+  calculateMatchQualityScore,
+  findPreferredMatchIndex,
+} = require('../index');
 
 function waitForEvent(socket, event, timeoutMs = 1_500) {
   return new Promise((resolve, reject) => {
@@ -16,6 +21,23 @@ function waitForEvent(socket, event, timeoutMs = 1_500) {
     function onEvent(payload) {
       clearTimeout(timeout);
       resolve(payload);
+    }
+
+    socket.once(event, onEvent);
+  });
+}
+
+function expectNoEvent(socket, event, timeoutMs = 300) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      socket.off(event, onEvent);
+      resolve();
+    }, timeoutMs);
+
+    function onEvent() {
+      clearTimeout(timer);
+      socket.off(event, onEvent);
+      reject(new Error(`Unexpectedly received ${event}`));
     }
 
     socket.once(event, onEvent);
@@ -131,6 +153,31 @@ async function connectClient(t, url) {
 function login(socket, data) {
   socket.emit('login', { ...data, safetyAcknowledged: true });
 }
+
+test('uses enough partner feedback before applying a bounded matchmaking preference', () => {
+  assert.equal(calculateMatchQualityScore({ positive: 1 }), 0);
+  assert.equal(calculateMatchQualityScore({ positive: 2 }), 2);
+  assert.equal(calculateMatchQualityScore({ not_a_match: 2 }), -2);
+  assert.equal(calculateMatchQualityScore({ positive: 20 }), 5);
+  assert.equal(calculateMatchQualityScore({ not_a_match: 20 }), -5);
+});
+
+test('prefers a higher-quality candidate within the same matching tier and preserves queue order', () => {
+  const candidates = [
+    { matchQualityScore: -2, name: 'not-a-match' },
+    { matchQualityScore: 2, name: 'positive' },
+    { matchQualityScore: 2, name: 'positive-later' },
+  ];
+
+  assert.equal(
+    findPreferredMatchIndex(candidates, 0, () => true),
+    1,
+  );
+  assert.equal(
+    findPreferredMatchIndex(candidates, 1, () => true),
+    1,
+  );
+});
 
 async function signInModerator(url, credentials) {
   const response = await fetch(`${url}/api/admin/login`, {
@@ -341,6 +388,10 @@ test('stores one post-chat rating and exposes feedback totals to admins', async 
   });
   await received;
 
+  const unsafeReceived = waitForEvent(bob, 'chat_rating_received');
+  bob.emit('rateChat', { chatId: match.chatId, rating: 'unsafe' });
+  await unsafeReceived;
+
   const duplicate = waitForEvent(alice, 'app_error');
   alice.emit('rateChat', { chatId: match.chatId, rating: 'unsafe' });
   assert.equal((await duplicate).code, 'invalid_feedback');
@@ -350,13 +401,26 @@ test('stores one post-chat rating and exposes feedback totals to admins', async 
     headers: { Authorization: `Bearer ${adminToken}` },
   });
   assert.equal(response.status, 200);
-  assert.deepEqual((await response.json()).summary, {
-    total: 1,
+  const feedbackAnalytics = await response.json();
+  assert.deepEqual(feedbackAnalytics.summary, {
+    total: 2,
     positive: 1,
     not_a_match: 0,
-    unsafe: 0,
-    chatsWithUnsafe: 0,
+    unsafe: 1,
+    chatsWithUnsafe: 1,
   });
+  assert.equal(feedbackAnalytics.days, 14);
+  assert.equal(feedbackAnalytics.daily.length, 14);
+  assert.equal(feedbackAnalytics.periodSummary.total, 2);
+  const unsafeChats = await fetch(`${url}/api/admin/chats?feedback=unsafe`, {
+    headers: { Authorization: `Bearer ${adminToken}` },
+  });
+  assert.equal(unsafeChats.status, 200);
+  assert.equal((await unsafeChats.json()).total, 1);
+  const invalidFilter = await fetch(`${url}/api/admin/chats?feedback=unknown`, {
+    headers: { Authorization: `Bearer ${adminToken}` },
+  });
+  assert.equal(invalidFilter.status, 400);
 });
 
 test('allows reporting and blocking a partner from the post-chat feedback flow', async (t) => {
@@ -425,6 +489,92 @@ test('does not rematch a client with a blocked partner', async (t) => {
   assert.equal((await caraMatched).partnerName, 'Alice');
 });
 
+test('does not rematch a pair after a not-a-match rating during the cooldown', async (t) => {
+  const url = await createTestServer(t);
+  const alice = await connectClient(t, url);
+  const bob = await connectClient(t, url);
+  const cara = await connectClient(t, url);
+  const aliceId = 'client-alice-12345';
+  const bobId = 'client-bob-123456';
+
+  const aliceMatched = waitForEvent(alice, 'matched');
+  const bobMatched = waitForEvent(bob, 'matched');
+  login(alice, { username: 'Alice', interests: 'games', clientId: aliceId });
+  login(bob, { username: 'Bob', interests: 'games', clientId: bobId });
+  const initialMatch = await aliceMatched;
+  await bobMatched;
+
+  const bobLeft = waitForEvent(bob, 'partner_left');
+  const aliceQueued = waitForEvent(alice, 'queued');
+  alice.emit('skip');
+  await Promise.all([bobLeft, aliceQueued]);
+
+  const feedbackReceived = waitForEvent(alice, 'chat_rating_received');
+  alice.emit('rateChat', { chatId: initialMatch.chatId, rating: 'not_a_match' });
+  await feedbackReceived;
+
+  const bobQueued = waitForEvent(bob, 'queued');
+  bob.emit('skip');
+  await bobQueued;
+  await Promise.all([expectNoEvent(alice, 'matched'), expectNoEvent(bob, 'matched')]);
+
+  const caraMatched = waitForEvent(cara, 'matched');
+  const aliceMatchedAgain = waitForEvent(alice, 'matched');
+  login(cara, { username: 'Cara', interests: 'games', clientId: 'client-cara-12345' });
+  const [caraMatch, aliceMatchAgain] = await Promise.all([caraMatched, aliceMatchedAgain]);
+  assert.equal(caraMatch.partnerName, 'Alice');
+  assert.equal(aliceMatchAgain.partnerName, 'Cara');
+});
+
+test('keeps a not-a-match pair cooldown after a server restart', async (t) => {
+  const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'anon-chat-match-cooldown-'));
+  t.after(() => fs.rm(dataDir, { recursive: true, force: true }));
+  const logger = { info() {}, error() {}, warn() {} };
+  const aliceId = 'client-alice-12345';
+  const bobId = 'client-bob-123456';
+
+  async function startServer() {
+    const chat = createChatServer({ logger, dataDir });
+    await new Promise((resolve, reject) => {
+      chat.server.once('error', reject);
+      chat.server.listen(0, '127.0.0.1', resolve);
+    });
+    return { chat, url: `http://127.0.0.1:${chat.server.address().port}` };
+  }
+
+  const first = await startServer();
+  const alice = await connectClient(t, first.url);
+  const bob = await connectClient(t, first.url);
+  const aliceMatched = waitForEvent(alice, 'matched');
+  const bobMatched = waitForEvent(bob, 'matched');
+  login(alice, { username: 'Alice', interests: 'games', clientId: aliceId });
+  login(bob, { username: 'Bob', interests: 'games', clientId: bobId });
+  const initialMatch = await aliceMatched;
+  await bobMatched;
+
+  const bobLeft = waitForEvent(bob, 'partner_left');
+  alice.emit('skip');
+  await bobLeft;
+  const feedbackReceived = waitForEvent(alice, 'chat_rating_received');
+  alice.emit('rateChat', { chatId: initialMatch.chatId, rating: 'not_a_match' });
+  await feedbackReceived;
+  await first.chat.close();
+
+  const second = await startServer();
+  t.after(() => second.chat.close());
+  const returningAlice = await connectClient(t, second.url);
+  const returningBob = await connectClient(t, second.url);
+  const aliceQueued = waitForEvent(returningAlice, 'queued');
+  const bobQueued = waitForEvent(returningBob, 'queued');
+  login(returningAlice, { username: 'Alice', interests: 'games', clientId: aliceId });
+  login(returningBob, { username: 'Bob', interests: 'games', clientId: bobId });
+  await Promise.all([aliceQueued, bobQueued]);
+  await Promise.all([
+    expectNoEvent(returningAlice, 'matched'),
+    expectNoEvent(returningBob, 'matched'),
+  ]);
+});
+
 test('accepts a report and writes a structured moderation log entry', async (t) => {
   const reports = [];
   const url = await createTestServer(t, {
@@ -472,6 +622,8 @@ test('persists reports and protects admin review', async (t) => {
   assert.match(adminMarkup, /HttpOnly/);
   assert.match(adminMarkup, /id="reports-badge"/);
   assert.match(adminMarkup, /id="appeals-badge"/);
+  assert.match(adminMarkup, /id="feedback-trend-chart"/);
+  assert.match(adminMarkup, /id="view-unsafe-chats"/);
 
   const alice = await connectClient(t, url);
   const bob = await connectClient(t, url);
