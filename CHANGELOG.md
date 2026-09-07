@@ -48,6 +48,8 @@ and the project follows [Semantic Versioning](https://semver.org/).
 - An admin-only Settings tab for changing the not-a-fit rematch cooldown, automatic-ban report
   threshold, and completed-transcript retention at runtime; changes are validated, audited, and
   persisted across restart.
+- A mobile responsive pass with keyboard-aware chat sizing, larger labelled safety actions,
+  bottom-sheet dialogs, and a thumb-friendly admin console on narrow screens.
 
 ### Changed
 

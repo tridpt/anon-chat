@@ -25,7 +25,7 @@ Mỗi khách truy cập được gán một `clientId` ngẫu nhiên lưu trong 
 | Gợi ý      | Câu mở lời (icebreaker) theo sở thích chung và ngôn ngữ                                                                                                                              |
 | Hàng đợi   | Hiển thị số người đang chờ, ước tính thời gian chờ, số người trực tuyến                                                                                                              |
 | Cảm xúc    | Emoji picker khi soạn tin; thả reaction emoji lên từng tin nhắn                                                                                                                      |
-| Giao diện  | Chuyển dark/light theme; đổi ngôn ngữ giao diện Việt/Anh (i18n)                                                                                                                      |
+| Giao diện  | Chuyển dark/light theme; đổi ngôn ngữ giao diện Việt/Anh (i18n); mobile-first với khung chat theo bàn phím và vùng an toàn màn hình                                                  |
 | Thông báo  | Báo trình duyệt khi được ghép cặp/có tin mới lúc tab ẩn; badge + nút xem tin mới khi đang đọc phía trên                                                                              |
 | An toàn    | Bỏ qua (skip), chặn (block) có xác nhận, bỏ chặn, báo cáo với lý do, đánh giá sau chat                                                                                               |
 | Phản hồi   | Đánh giá sau chat kèm lý do nhanh khi không phù hợp; admin xem tỷ lệ, xu hướng 14 ngày, lý do không phù hợp và lọc chat không an toàn                                                |
@@ -375,15 +375,17 @@ Cờ trạng thái quan trọng: `hasActiveSession`, `isInChat`, `currentPartner
 ### 8.4. `style.css`
 
 - Hệ **biến CSS** trong `:root` (theme tối mặc định) và override trong `[data-theme="light"]`: màu nền, kính (glass), văn bản, accent, bề mặt (`--surface-soft`, `--surface-strong`, `--system-bg`), độ mờ orb.
+- Biến `--app-height` lấy từ `visualViewport` giúp khung chat co đúng khi bàn phím điện thoại mở; composer luôn neo đáy vùng nhìn thấy và tự cuộn về tin mới nhất khi người dùng đang soạn.
 - Hiệu ứng glassmorphism, orb nền động, animation chuyển màn hình, bong bóng tin nhắn, chỉ báo gõ.
 - Style cho emoji picker, reaction picker/chip, nút theme, nút đổi ngôn ngữ, dialog, danh sách chặn.
-- Responsive ở `@media (max-width: 768px)`: chat toàn màn hình, nút hành động thu gọn thành icon, điều chỉnh vị trí nút nổi và lưới emoji.
+- Responsive ở `@media (max-width: 768px)`: chat toàn màn hình, nút **Report / Block / Skip** thành vùng chạm lớn có nhãn, composer có safe-area và dialog safety dạng bottom sheet trên màn hình hẹp.
 
 ### 8.5. Trang kiểm duyệt — `admin.html` / `admin.js`
 
 - Đăng nhập bằng tài khoản moderator; `ADMIN_TOKEN` chỉ dùng bootstrap/recovery và trình duyệt không lưu credential mà dùng cookie phiên `HttpOnly`.
 - Tab **Team** chỉ hiện với admin để tạo account, đổi role/mật khẩu, và bật/tắt moderator.
 - Tab **Settings** chỉ hiện với admin, cho phép thay đổi cooldown ghép lại sau `not_a_match`, ngưỡng auto-ban, và số ngày lưu transcript; thay đổi có hiệu lực ngay và được audit.
+- Trên điện thoại, admin tab bar sticky cuộn ngang, form và hành động card xếp dọc để dễ thao tác một tay; cỡ chữ input tối thiểu 16px giúp tránh trình duyệt tự zoom.
 - `viewer` chỉ đọc; `moderator` có thể xử lý report, gỡ ban, và xóa transcript; `admin` có toàn quyền.
 - Dialog sau khi kết thúc chat cho phép chọn đánh giá, ghi chú tùy chọn, và với đánh giá không an toàn có thể tạo report + block gắn với transcript.
 - Khi chọn `not_a_match`, người dùng có thể chọn nhanh một lý do: lệch ngôn ngữ, khác sở thích, cách trò chuyện không hợp, hoặc lý do khác. Lý do là tùy chọn, lưu cùng feedback và được tổng hợp trên Overview admin.

@@ -104,6 +104,23 @@ const emojiPanel = document.getElementById('emoji-panel');
 const langToggle = document.getElementById('lang-toggle');
 const langToggleLabel = document.getElementById('lang-toggle-label');
 
+function updateViewportHeight() {
+  const viewportHeight = window.visualViewport?.height || window.innerHeight;
+  document.documentElement.style.setProperty('--app-height', `${Math.round(viewportHeight)}px`);
+}
+
+function handleVisualViewportResize() {
+  updateViewportHeight();
+  if (document.activeElement === msgInput && isInChat) {
+    window.requestAnimationFrame(scrollToBottom);
+  }
+}
+
+updateViewportHeight();
+window.addEventListener('resize', updateViewportHeight, { passive: true });
+window.addEventListener('orientationchange', updateViewportHeight, { passive: true });
+window.visualViewport?.addEventListener('resize', handleVisualViewportResize, { passive: true });
+
 // i18n bootstrap
 const t = (key, params) => window.I18N.t(key, params);
 
@@ -1358,6 +1375,13 @@ msgInput.addEventListener('input', () => {
   typingTimeout = setTimeout(() => {
     clearMyTyping();
   }, 1500);
+});
+
+msgInput.addEventListener('focus', () => {
+  updateViewportHeight();
+  window.setTimeout(() => {
+    if (isInChat) scrollToBottom();
+  }, 120);
 });
 
 socket.on('typing', () => {

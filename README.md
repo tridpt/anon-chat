@@ -18,6 +18,8 @@ Anonymous, one-on-one chat with language-compatible matching. GhostChat does not
 - Require self-attested 18+ and Community Rules acceptance before joining the queue.
 - Skip a chat, block a current partner from an in-chat confirmation dialog, and manage or undo blocks in the browser.
 - Insert emojis from a built-in picker and switch between dark and light themes (saved per browser).
+- Use a phone-first chat layout with keyboard-aware sizing, thumb-sized Block/Report/Skip controls,
+  bottom-sheet safety dialogs, and a compact responsive moderation console.
 - Show an expiring partner-typing indicator, preserve your reading position for new messages, and provide sound/browser notifications when the tab is hidden.
 - Ask for a post-chat rating (good fit, not a match, or unsafe) with an optional comment; unsafe feedback can report and block the partner after the chat ends.
 - Let people optionally explain a "not a match" rating with language, interests, conversation

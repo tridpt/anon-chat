@@ -1488,7 +1488,16 @@ h2 {
 @media (max-width: 620px) {
   .admin-shell {
     width: min(100% - 24px, 1160px);
-    padding-top: 32px;
+    padding-top: max(24px, env(safe-area-inset-top));
+    padding-bottom: calc(56px + env(safe-area-inset-bottom));
+  }
+
+  body {
+    overflow-x: hidden;
+  }
+
+  h1 {
+    font-size: clamp(32px, 11vw, 48px);
   }
 
   .admin-header,
@@ -1510,11 +1519,21 @@ h2 {
   }
 
   .admin-tabs {
-    margin-top: 14px;
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    margin: 14px -12px 0;
+    padding: 5px max(5px, env(safe-area-inset-left)) 5px max(5px, env(safe-area-inset-right));
+    border-radius: 0 0 14px 14px;
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    scroll-snap-type: x proximity;
   }
 
   .admin-tab {
     flex: 0 0 auto;
+    min-height: 44px;
+    scroll-snap-align: start;
   }
 
   .panel,
@@ -1537,6 +1556,12 @@ h2 {
     grid-template-columns: 1fr;
   }
 
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+
   .token-form button,
   .moderation-fields button,
   .moderator-form button {
@@ -1546,6 +1571,29 @@ h2 {
   .report-topline {
     flex-direction: column;
     gap: 10px;
+  }
+
+  .section-tools {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    justify-content: stretch;
+  }
+
+  .section-tools button {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .report-actions,
+  .chat-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .report-actions > *,
+  .chat-actions > * {
+    width: 100%;
   }
 
   .feedback-dashboard {
