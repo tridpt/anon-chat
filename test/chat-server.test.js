@@ -193,6 +193,88 @@ async function signInModerator(url, credentials) {
   };
 }
 
+test('protects and persists runtime settings for admins', async (t) => {
+  const adminToken = 'test-admin-token-123';
+  const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'anon-chat-settings-'));
+  const servers = new Set();
+
+  async function startServer() {
+    const chat = createChatServer({
+      logger: { info() {}, error() {} },
+      dataDir,
+      adminToken,
+    });
+    await new Promise((resolve, reject) => {
+      chat.server.once('error', reject);
+      chat.server.listen(0, '127.0.0.1', resolve);
+    });
+    servers.add(chat);
+    return { chat, url: `http://127.0.0.1:${chat.server.address().port}` };
+  }
+
+  t.after(async () => {
+    await Promise.all([...servers].map((chat) => chat.close()));
+    await fs.rm(dataDir, { recursive: true, force: true });
+  });
+
+  const first = await startServer();
+  const { url } = first;
+  assert.equal((await fetch(`${url}/api/admin/settings`)).status, 401);
+
+  const headers = {
+    Authorization: `Bearer ${adminToken}`,
+    'Content-Type': 'application/json',
+  };
+  const initial = await fetch(`${url}/api/admin/settings`, { headers });
+  assert.equal(initial.status, 200);
+  assert.deepEqual((await initial.json()).settings, {
+    notAMatchCooldownDays: 30,
+    autoBanReportThreshold: 3,
+    chatRetentionDays: 30,
+  });
+
+  const invalid = await fetch(`${url}/api/admin/settings`, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify({ autoBanReportThreshold: 1 }),
+  });
+  assert.equal(invalid.status, 400);
+
+  const updated = await fetch(`${url}/api/admin/settings`, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify({
+      notAMatchCooldownDays: 7,
+      autoBanReportThreshold: 5,
+      chatRetentionDays: 0,
+    }),
+  });
+  assert.equal(updated.status, 200);
+  assert.deepEqual((await updated.json()).settings, {
+    notAMatchCooldownDays: 7,
+    autoBanReportThreshold: 5,
+    chatRetentionDays: 0,
+  });
+
+  const stored = JSON.parse(await fs.readFile(path.join(dataDir, 'settings.json'), 'utf8'));
+  assert.deepEqual(stored, {
+    notAMatchCooldownDays: 7,
+    autoBanReportThreshold: 5,
+    chatRetentionDays: 0,
+  });
+
+  await first.chat.close();
+  servers.delete(first.chat);
+  const restarted = await startServer();
+  const afterRestart = await fetch(`${restarted.url}/api/admin/settings`, { headers });
+  assert.equal(afterRestart.status, 200);
+  assert.deepEqual((await afterRestart.json()).settings, {
+    notAMatchCooldownDays: 7,
+    autoBanReportThreshold: 5,
+    chatRetentionDays: 0,
+  });
+});
+
 test('matches shared interests and relays messages', async (t) => {
   const url = await createTestServer(t);
   const alice = await connectClient(t, url);

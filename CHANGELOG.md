@@ -45,6 +45,9 @@ and the project follows [Semantic Versioning](https://semver.org/).
   the cooldown is bidirectional and does not restrict either visitor from other matches.
 - Quick optional reasons for "not a match" ratings (language, interests, conversation style, or
   other), with an admin breakdown for identifying pairing gaps.
+- An admin-only Settings tab for changing the not-a-fit rematch cooldown, automatic-ban report
+  threshold, and completed-transcript retention at runtime; changes are validated, audited, and
+  persisted across restart.
 
 ### Changed
 

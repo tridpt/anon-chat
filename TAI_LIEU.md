@@ -9,7 +9,7 @@
 **GhostChat** là một ứng dụng web cho phép hai người lạ trò chuyện ẩn danh theo thời gian thực, được ghép cặp dựa trên **sở thích chung** và **ngôn ngữ ưu tiên**. Ứng dụng:
 
 - **Không tạo tài khoản**, không yêu cầu đăng nhập.
-- **Lưu transcript có kiểm soát** — tin nhắn được che từ nhạy cảm và lưu trong `data/chats.json` để moderator xem, tự dọn theo `CHAT_RETENTION_DAYS`; người dùng có thể đánh giá sau chat và gửi report + block khi thấy không an toàn.
+- **Lưu transcript có kiểm soát** — tin nhắn được che từ nhạy cảm và lưu trong `data/chats.json` để moderator xem, tự dọn theo thời hạn trong Settings; người dùng có thể đánh giá sau chat và gửi report + block khi thấy không an toàn.
 - Có cơ chế an toàn: chặn, báo cáo, lọc từ ngữ xấu, tự động cấm tạm thời, và một trang kiểm duyệt riêng.
 
 Mỗi khách truy cập được gán một `clientId` ngẫu nhiên lưu trong trình duyệt (localStorage). Đây không phải tài khoản — xóa dữ liệu trình duyệt sẽ tạo `clientId` mới. `clientId` chỉ dùng để tránh ghép lại với người đã chặn và để gắn báo cáo/cấm.
@@ -18,21 +18,21 @@ Mỗi khách truy cập được gán một `clientId` ngẫu nhiên lưu trong 
 
 ## 2. Tính năng
 
-| Nhóm       | Tính năng                                                                                                                                                        |
-| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Ghép cặp   | Ghép theo sở thích chung, ưu tiên ngôn ngữ tương thích (Việt/Anh/bất kỳ), ưu tiên mềm theo phản hồi, cooldown cặp không phù hợp 30 ngày, fallback sau 5 giây chờ |
-| Trò chuyện | Nhắn tin thời gian thực, chỉ báo "đang gõ", âm thanh thông báo                                                                                                   |
-| Gợi ý      | Câu mở lời (icebreaker) theo sở thích chung và ngôn ngữ                                                                                                          |
-| Hàng đợi   | Hiển thị số người đang chờ, ước tính thời gian chờ, số người trực tuyến                                                                                          |
-| Cảm xúc    | Emoji picker khi soạn tin; thả reaction emoji lên từng tin nhắn                                                                                                  |
-| Giao diện  | Chuyển dark/light theme; đổi ngôn ngữ giao diện Việt/Anh (i18n)                                                                                                  |
-| Thông báo  | Báo trình duyệt khi được ghép cặp/có tin mới lúc tab ẩn; badge + nút xem tin mới khi đang đọc phía trên                                                          |
-| An toàn    | Bỏ qua (skip), chặn (block) có xác nhận, bỏ chặn, báo cáo với lý do, đánh giá sau chat                                                                           |
-| Phản hồi   | Đánh giá sau chat kèm lý do nhanh khi không phù hợp; admin xem tỷ lệ, xu hướng 14 ngày, lý do không phù hợp và lọc chat không an toàn                            |
-| Kiểm duyệt | Lọc từ ngữ xấu, giới hạn link, tự động cấm theo số report; trang `/admin`                                                                                        |
-| Khiếu nại  | Người bị ban gửi appeal; moderator duyệt/từ chối, duyệt sẽ gỡ ban và giữ liên kết report/transcript                                                              |
-| Vận hành   | Endpoint `/health` với số liệu; ban lưu bền vững qua restart                                                                                                     |
-| Mở rộng    | Redis adapter tùy chọn cho nhiều instance                                                                                                                        |
+| Nhóm       | Tính năng                                                                                                                                                                            |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Ghép cặp   | Ghép theo sở thích chung, ưu tiên ngôn ngữ tương thích (Việt/Anh/bất kỳ), ưu tiên mềm theo phản hồi, cooldown cặp không phù hợp có thể chỉnh trong Settings, fallback sau 5 giây chờ |
+| Trò chuyện | Nhắn tin thời gian thực, chỉ báo "đang gõ", âm thanh thông báo                                                                                                                       |
+| Gợi ý      | Câu mở lời (icebreaker) theo sở thích chung và ngôn ngữ                                                                                                                              |
+| Hàng đợi   | Hiển thị số người đang chờ, ước tính thời gian chờ, số người trực tuyến                                                                                                              |
+| Cảm xúc    | Emoji picker khi soạn tin; thả reaction emoji lên từng tin nhắn                                                                                                                      |
+| Giao diện  | Chuyển dark/light theme; đổi ngôn ngữ giao diện Việt/Anh (i18n)                                                                                                                      |
+| Thông báo  | Báo trình duyệt khi được ghép cặp/có tin mới lúc tab ẩn; badge + nút xem tin mới khi đang đọc phía trên                                                                              |
+| An toàn    | Bỏ qua (skip), chặn (block) có xác nhận, bỏ chặn, báo cáo với lý do, đánh giá sau chat                                                                                               |
+| Phản hồi   | Đánh giá sau chat kèm lý do nhanh khi không phù hợp; admin xem tỷ lệ, xu hướng 14 ngày, lý do không phù hợp và lọc chat không an toàn                                                |
+| Kiểm duyệt | Lọc từ ngữ xấu, giới hạn link, tự động cấm theo số report; admin chỉnh thông số runtime tại trang `/admin`                                                                           |
+| Khiếu nại  | Người bị ban gửi appeal; moderator duyệt/từ chối, duyệt sẽ gỡ ban và giữ liên kết report/transcript                                                                                  |
+| Vận hành   | Endpoint `/health` với số liệu; ban lưu bền vững qua restart                                                                                                                         |
+| Mở rộng    | Redis adapter tùy chọn cho nhiều instance                                                                                                                                            |
 
 ---
 
@@ -61,7 +61,7 @@ anon-chat/
 ├── .gitignore
 ├── README.md                 # Hướng dẫn ngắn (tiếng Anh)
 ├── TAI_LIEU.md               # Tài liệu chi tiết này
-├── data/                     # Dữ liệu bền vững (gitignored): reports, appeals, bans, chats, moderator accounts, audit logs
+├── data/                     # Dữ liệu bền vững (gitignored): reports, appeals, bans, chats, settings, moderator accounts, audit logs
 ├── public/                   # Tài nguyên frontend tĩnh
 │   ├── index.html            # Giao diện chat chính
 │   ├── script.js             # Logic client
@@ -226,6 +226,8 @@ Tham số: `{ logger, dataDir, adminToken, adminPath, adminSessionTtlMs, redisUr
 | GET      | `/api/admin/moderators`     | Admin xem danh sách tài khoản moderator                                                                           |
 | POST     | `/api/admin/moderators`     | Admin tạo tài khoản moderator (`admin`, `moderator`, hoặc `viewer`)                                               |
 | PATCH    | `/api/admin/moderators/:id` | Admin đổi role, mật khẩu, hoặc bật/tắt tài khoản                                                                  |
+| GET      | `/api/admin/settings`       | Admin xem giới hạn và giá trị runtime hiện tại                                                                    |
+| PATCH    | `/api/admin/settings`       | Admin đổi cooldown `not_a_match`, ngưỡng auto-ban, hoặc thời hạn lưu transcript                                   |
 | GET      | `/api/admin/reports`        | Yêu cầu admin. Liệt kê báo cáo, lọc theo `?status=`                                                               |
 | PATCH    | `/api/admin/reports/:id`    | Yêu cầu admin. Cập nhật `status` + `moderationNote`                                                               |
 | GET      | `/api/admin/chat-feedback`  | Yêu cầu admin. Trả tổng số đánh giá và các cờ an toàn từ transcript                                               |
@@ -247,6 +249,8 @@ Tham số: `{ logger, dataDir, adminToken, adminPath, adminSessionTtlMs, redisUr
   và yêu cầu same-origin khi trình duyệt gửi request. Duyệt appeal gọi `liftBan()` và ghi audit event.
 - `GET /api/admin/events` chỉ nhận cookie session `HttpOnly` hợp lệ (EventSource không gửi bearer
   header), giữ kết nối SSE và tự đóng khi session hết hạn, bị thu hồi, hoặc tài khoản bị vô hiệu hóa.
+- Tab **Settings** chỉ dành cho role `admin`. Ba giá trị được validate ở server, áp dụng ngay, ghi audit event,
+  lưu ở `data/settings.json`, và được nạp lại khi khởi động. Giảm thời hạn transcript sẽ dọn ngay các chat đã hết hạn.
 
 ### 6.7. Thuật toán ghép cặp
 
@@ -261,7 +265,7 @@ Các bước:
    - (c) Ngôn ngữ tương thích _và_ một trong hai đã chờ đủ **5 giây**.
    - (d) Bất kỳ ai (đã chờ đủ 5 giây) — fallback cuối.
    - Trong từng tầng, điểm chất lượng riêng tư làm tiêu chí phụ: chỉ có hiệu lực sau tối thiểu 2 phản hồi từ đối tác, `positive` tăng ưu tiên và `not_a_match` giảm ưu tiên; cùng điểm vẫn theo thứ tự vào hàng đợi. Phản hồi `unsafe` không được dùng để xếp hạng.
-   - Nếu một bên chọn `not_a_match`, cặp hai `clientId` được đưa vào cooldown hai chiều 30 ngày. Điều này chỉ loại đúng cặp đó khỏi `canMatch`; mỗi người vẫn được ghép với người khác.
+   - Nếu một bên chọn `not_a_match`, cặp hai `clientId` được đưa vào cooldown hai chiều theo số ngày trong Settings (mặc định 30). Điều này chỉ loại đúng cặp đó khỏi `canMatch`; mỗi người vẫn được ghép với người khác.
 3. **Điều kiện ghép** (`canMatch`): khác `clientId`, và **không bên nào đã chặn bên kia**.
 4. **Tương thích ngôn ngữ** (`hasCompatibleLanguage`): một trong hai là `any`, hoặc cùng ngôn ngữ.
 5. Khi ghép: tạo `roomId` (UUID), cả hai `join(roomId)`, gán `currentRoom` và `partner` cho nhau, phát `matched` kèm `sharedInterests`, tăng `totalMatches`, cập nhật EMA thời gian chờ.
@@ -275,7 +279,7 @@ Các bước:
 ### 6.9. Lọc nội dung & tự động cấm
 
 - Tin nhắn đi qua `parseMessage` → kiểm tra số link (`countLinks` vs `maxLinksPerMessage`) → `maskProfanity` trước khi phát trong room.
-- `registerReportAgainst(clientId)` — ghi mốc báo cáo; nếu trong 60 phút đạt **3 báo cáo**, đặt lệnh cấm 24 giờ, lưu bền vững (`persistBans`), trả `true`.
+- `registerReportAgainst(clientId)` — ghi mốc báo cáo; nếu trong 60 phút đạt ngưỡng của Settings (mặc định **3 báo cáo**), đặt lệnh cấm 24 giờ, lưu bền vững (`persistBans`), trả `true`.
 - `isClientBanned(clientId)` — kiểm tra, tự xóa lệnh cấm hết hạn (lazy).
 - `removeBannedClient(clientId)` — kéo mọi socket của client bị cấm khỏi hàng đợi/phòng và gửi lỗi `banned`.
 - `persistBans()` — gom các lệnh cấm còn hiệu lực, prune lệnh hết hạn, ghi `bans.json`.
@@ -379,6 +383,7 @@ Cờ trạng thái quan trọng: `hasActiveSession`, `isInChat`, `currentPartner
 
 - Đăng nhập bằng tài khoản moderator; `ADMIN_TOKEN` chỉ dùng bootstrap/recovery và trình duyệt không lưu credential mà dùng cookie phiên `HttpOnly`.
 - Tab **Team** chỉ hiện với admin để tạo account, đổi role/mật khẩu, và bật/tắt moderator.
+- Tab **Settings** chỉ hiện với admin, cho phép thay đổi cooldown ghép lại sau `not_a_match`, ngưỡng auto-ban, và số ngày lưu transcript; thay đổi có hiệu lực ngay và được audit.
 - `viewer` chỉ đọc; `moderator` có thể xử lý report, gỡ ban, và xóa transcript; `admin` có toàn quyền.
 - Dialog sau khi kết thúc chat cho phép chọn đánh giá, ghi chú tùy chọn, và với đánh giá không an toàn có thể tạo report + block gắn với transcript.
 - Khi chọn `not_a_match`, người dùng có thể chọn nhanh một lý do: lệch ngôn ngữ, khác sở thích, cách trò chuyện không hợp, hoặc lý do khác. Lý do là tùy chọn, lưu cùng feedback và được tổng hợp trên Overview admin.
@@ -395,17 +400,18 @@ Cờ trạng thái quan trọng: `hasActiveSession`, `isInChat`, `currentPartner
 
 ## 9. Cấu hình (biến môi trường)
 
-| Biến                      | Mặc định                  | Mục đích                                                                             |
-| ------------------------- | ------------------------- | ------------------------------------------------------------------------------------ |
-| `PORT`                    | `3000`                    | Cổng HTTP và Socket.IO                                                               |
-| `DATA_DIR`                | `./data`                  | Thư mục lưu báo cáo, appeal, lệnh cấm, transcript, tài khoản moderator, và audit log |
-| `BACKUP_DIR`              | `./backups`               | Thư mục lưu snapshot JSON có timestamp khi chạy `npm run backup`                     |
-| `BACKUP_RETENTION`        | `14`                      | Số snapshot giữ lại tự động; `0` tắt dọn snapshot cũ                                 |
-| `BACKUP_INTERVAL_HOURS`   | `0`                       | Chu kỳ backup tự động khi server đang chạy; `0` tắt backup theo lịch                 |
-| `ADMIN_TOKEN`             | _(khuyến nghị bootstrap)_ | Token tạo admin đầu tiên và truy cập khẩn cấp server-to-server                       |
-| `ADMIN_SESSION_TTL_HOURS` | `8`                       | Thời gian sống phiên admin trong RAM (giờ)                                           |
-| `ADMIN_COOKIE_SECURE`     | `auto`                    | Ép cờ `Secure` cho cookie (`true`/`1`); tự bật trong HTTPS/production                |
-| `REDIS_URL`               | _(tùy chọn)_              | Bật Redis adapter cho nhiều instance, vd `redis://localhost:6379`                    |
+| Biến                      | Mặc định                  | Mục đích                                                                                                |
+| ------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `PORT`                    | `3000`                    | Cổng HTTP và Socket.IO                                                                                  |
+| `DATA_DIR`                | `./data`                  | Thư mục lưu báo cáo, appeal, lệnh cấm, transcript, tài khoản moderator, và audit log                    |
+| `BACKUP_DIR`              | `./backups`               | Thư mục lưu snapshot JSON có timestamp khi chạy `npm run backup`                                        |
+| `BACKUP_RETENTION`        | `14`                      | Số snapshot giữ lại tự động; `0` tắt dọn snapshot cũ                                                    |
+| `BACKUP_INTERVAL_HOURS`   | `0`                       | Chu kỳ backup tự động khi server đang chạy; `0` tắt backup theo lịch                                    |
+| `CHAT_RETENTION_DAYS`     | `30`                      | Giá trị retention ban đầu; `0`/số âm là lưu vô thời hạn, sau khi Settings được lưu thì Settings ưu tiên |
+| `ADMIN_TOKEN`             | _(khuyến nghị bootstrap)_ | Token tạo admin đầu tiên và truy cập khẩn cấp server-to-server                                          |
+| `ADMIN_SESSION_TTL_HOURS` | `8`                       | Thời gian sống phiên admin trong RAM (giờ)                                                              |
+| `ADMIN_COOKIE_SECURE`     | `auto`                    | Ép cờ `Secure` cho cookie (`true`/`1`); tự bật trong HTTPS/production                                   |
+| `REDIS_URL`               | _(tùy chọn)_              | Bật Redis adapter cho nhiều instance, vd `redis://localhost:6379`                                       |
 
 Bật kiểm duyệt (PowerShell):
 
@@ -527,7 +533,8 @@ Khuyến nghị production: HTTPS, rate limit ở tầng proxy/IP, công bố ch
 
 - `data/reports.json` — mảng báo cáo (mới nhất ở đầu).
 - `data/bans.json` — mảng lệnh cấm còn hiệu lực `{ clientId, banUntil }`.
-- `data/chats.json` — transcript chat đã che nội dung, tự dọn theo `CHAT_RETENTION_DAYS`.
+- `data/chats.json` — transcript chat đã che nội dung, tự dọn theo `data/settings.json` (hoặc giá trị khởi tạo `CHAT_RETENTION_DAYS`).
+- `data/settings.json` — cấu hình runtime của admin: cooldown `not_a_match`, ngưỡng auto-ban, và thời hạn lưu transcript.
 - `data/resolved-reports.json` và `data/moderation-log.json` — báo cáo đã xử lý và nhật ký thao tác moderator (kèm actor).
 - `data/appeals.json` — các khiếu nại ban, snapshot lệnh cấm, trạng thái và quyết định moderator.
 - `data/moderators.json` — tài khoản moderator, role, trạng thái, và hash mật khẩu salted `scrypt`; không commit hoặc chia sẻ file này.

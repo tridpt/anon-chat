@@ -72,6 +72,13 @@ const moderatorsContainer = document.getElementById('moderators');
 const refreshBackupsButton = document.getElementById('refresh-backups');
 const backupsContainer = document.getElementById('backups');
 const pendingRestoreContainer = document.getElementById('pending-restore');
+const refreshSettingsButton = document.getElementById('refresh-settings');
+const settingsForm = document.getElementById('settings-form');
+const saveSettingsButton = document.getElementById('save-settings');
+const settingsHelp = document.getElementById('settings-help');
+const notAMatchCooldownInput = document.getElementById('setting-not-a-match-cooldown');
+const autoBanThresholdInput = document.getElementById('setting-auto-ban-threshold');
+const chatRetentionInput = document.getElementById('setting-chat-retention');
 const TAB_KEY = 'ghostchat-admin-tab';
 const LEGACY_TOKEN_KEY = 'ghostchat-admin-token';
 const CHAT_PAGE_SIZE = 10;
@@ -84,6 +91,7 @@ const TAB_ORDER = [
   'audit',
   'team',
   'backups',
+  'settings',
   'chats',
 ];
 let activeTab = 'overview';
@@ -176,6 +184,10 @@ function scheduleRealtimeRefresh(kind) {
     }
     if (kinds.includes('bans') && activeTab === 'bans') {
       loadBans();
+      return;
+    }
+    if (kinds.includes('settings') && activeTab === 'settings') {
+      loadSettings();
       return;
     }
     if (kinds.includes('audit') && activeTab === 'audit') {
@@ -374,6 +386,7 @@ function loadActiveTab() {
   if (activeTab === 'audit') return loadAuditLog();
   if (activeTab === 'team') return loadModerators();
   if (activeTab === 'backups') return loadBackups();
+  if (activeTab === 'settings') return loadSettings();
   return loadChats();
 }
 
@@ -402,17 +415,56 @@ function updateRoleUi() {
   const teamPanel = document.getElementById('panel-team');
   const backupsTab = document.getElementById('tab-backups');
   const backupsPanel = document.getElementById('panel-backups');
+  const settingsTab = document.getElementById('tab-settings');
+  const settingsPanel = document.getElementById('panel-settings');
   const showAdminTools = isAuthenticated && canManageTeam();
   teamTab.hidden = !showAdminTools;
   teamPanel.hidden = !showAdminTools || activeTab !== 'team';
   backupsTab.hidden = !showAdminTools;
   backupsPanel.hidden = !showAdminTools || activeTab !== 'backups';
-  if (!showAdminTools && ['team', 'backups'].includes(activeTab)) {
+  settingsTab.hidden = !showAdminTools;
+  settingsPanel.hidden = !showAdminTools || activeTab !== 'settings';
+  if (!showAdminTools && ['team', 'backups', 'settings'].includes(activeTab)) {
     setActiveTab('overview', { load: false });
   }
   moderatorForm.hidden = !showAdminTools;
   if (refreshModeratorsButton) refreshModeratorsButton.hidden = !showAdminTools;
   if (refreshBackupsButton) refreshBackupsButton.hidden = !showAdminTools;
+}
+
+function applySettingsLimits(limits = {}) {
+  const fields = [
+    ['notAMatchCooldownDays', notAMatchCooldownInput],
+    ['autoBanReportThreshold', autoBanThresholdInput],
+    ['chatRetentionDays', chatRetentionInput],
+  ];
+  fields.forEach(([key, input]) => {
+    const range = limits[key];
+    if (!input || !range) return;
+    input.min = String(range.min);
+    input.max = String(range.max);
+  });
+}
+
+function renderSettings(settings = {}) {
+  notAMatchCooldownInput.value = String(settings.notAMatchCooldownDays ?? '');
+  autoBanThresholdInput.value = String(settings.autoBanReportThreshold ?? '');
+  chatRetentionInput.value = String(settings.chatRetentionDays ?? '');
+}
+
+async function loadSettings() {
+  try {
+    refreshSettingsButton.disabled = true;
+    const result = await api('/api/admin/settings');
+    applySettingsLimits(result.limits);
+    renderSettings(result.settings);
+    settingsHelp.innerText = 'Changes are applied immediately and recorded in the moderation log.';
+    setStatus('Settings loaded.');
+  } catch (error) {
+    setStatus(error.message, true);
+  } finally {
+    refreshSettingsButton.disabled = false;
+  }
 }
 
 function setAuthenticated(authenticated, expiresAt = null, nextPrincipal = null) {
@@ -740,6 +792,7 @@ function renderBans(bans) {
 function formatAuditAction(event) {
   if (event.type === 'moderator_created') return 'Moderator account created';
   if (event.type === 'moderator_updated') return 'Moderator account updated';
+  if (event.type === 'settings_updated') return 'Runtime settings updated';
   if (event.type === 'transcript_deleted') return 'Transcript deleted';
   if (event.type === 'appeal_submitted') return 'Ban appeal submitted';
   if (event.type === 'appeal_reviewed') {
@@ -1664,6 +1717,34 @@ moderatorForm.addEventListener('submit', async (event) => {
   }
 });
 
+settingsForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!canManageTeam()) {
+    setStatus('Only an admin can change runtime settings.', true);
+    return;
+  }
+  saveSettingsButton.disabled = true;
+  try {
+    const result = await api('/api/admin/settings', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        notAMatchCooldownDays: Number(notAMatchCooldownInput.value),
+        autoBanReportThreshold: Number(autoBanThresholdInput.value),
+        chatRetentionDays: Number(chatRetentionInput.value),
+      }),
+    });
+    renderSettings(result.settings);
+    settingsHelp.innerText = result.changedFields?.length
+      ? `Updated: ${result.changedFields.join(', ')}.`
+      : 'No changes were needed.';
+    setStatus('Runtime settings saved.');
+  } catch (error) {
+    setStatus(error.message, true);
+  } finally {
+    saveSettingsButton.disabled = false;
+  }
+});
+
 refreshButton.addEventListener('click', loadReports);
 refreshResolvedButton.addEventListener('click', loadReports);
 refreshAppealsButton.addEventListener('click', loadAppeals);
@@ -1671,6 +1752,7 @@ refreshBansButton.addEventListener('click', loadBans);
 refreshAuditButton.addEventListener('click', loadAuditLog);
 refreshModeratorsButton.addEventListener('click', loadModerators);
 refreshBackupsButton.addEventListener('click', loadBackups);
+refreshSettingsButton.addEventListener('click', loadSettings);
 chatFilterForm.addEventListener('submit', (event) => {
   event.preventDefault();
   chatPage = 1;

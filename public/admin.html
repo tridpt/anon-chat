@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="robots" content="noindex, nofollow" />
     <title>GhostChat Moderation</title>
-    <link rel="stylesheet" href="admin.css?v=9" />
+    <link rel="stylesheet" href="admin.css?v=10" />
   </head>
   <body>
     <main class="admin-shell">
@@ -174,6 +174,20 @@
             tabindex="-1"
           >
             Backups
+          </button>
+          <button
+            id="tab-settings"
+            class="admin-tab"
+            type="button"
+            role="tab"
+            aria-selected="false"
+            aria-controls="panel-settings"
+            data-tab="settings"
+            data-admin-only
+            hidden
+            tabindex="-1"
+          >
+            Settings
           </button>
           <button
             id="tab-chats"
@@ -500,6 +514,59 @@
         </section>
 
         <section
+          id="panel-settings"
+          class="tab-panel"
+          role="tabpanel"
+          aria-labelledby="tab-settings"
+          data-tab-panel="settings"
+          hidden
+        >
+          <section class="admin-section settings-section" aria-labelledby="settings-title">
+            <div class="section-heading">
+              <div>
+                <span class="section-kicker">Runtime controls</span>
+                <h2 id="settings-title">Matching and safety settings</h2>
+                <p>
+                  Changes apply immediately, are recorded in the moderation log, and survive
+                  restart.
+                </p>
+              </div>
+              <button id="refresh-settings" type="button" class="secondary">Reset form</button>
+            </div>
+            <form id="settings-form" class="settings-form">
+              <label for="setting-not-a-match-cooldown">
+                <span>"Not a fit" rematch cooldown</span>
+                <small>Days before the same pair may match again.</small>
+              </label>
+              <div class="settings-input">
+                <input id="setting-not-a-match-cooldown" type="number" step="1" required />
+                <span>days</span>
+              </div>
+              <label for="setting-auto-ban-threshold">
+                <span>Automatic ban threshold</span>
+                <small>Reports from a client within one hour before a 24-hour suspension.</small>
+              </label>
+              <div class="settings-input">
+                <input id="setting-auto-ban-threshold" type="number" step="1" required />
+                <span>reports</span>
+              </div>
+              <label for="setting-chat-retention">
+                <span>Transcript retention</span>
+                <small>Completed chat retention in days. Use 0 to retain indefinitely.</small>
+              </label>
+              <div class="settings-input">
+                <input id="setting-chat-retention" type="number" step="1" required />
+                <span>days</span>
+              </div>
+              <div class="settings-actions">
+                <p id="settings-help" class="form-help">Loading current settings.</p>
+                <button id="save-settings" type="submit">Save changes</button>
+              </div>
+            </form>
+          </section>
+        </section>
+
+        <section
           id="panel-chats"
           class="tab-panel"
           role="tabpanel"
@@ -547,6 +614,6 @@
       </div>
     </main>
 
-    <script src="admin.js?v=15"></script>
+    <script src="admin.js?v=16"></script>
   </body>
 </html>

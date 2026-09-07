@@ -174,7 +174,16 @@ const CHAT_NOT_A_MATCH_REASONS = new Set([
 ]);
 const MATCH_QUALITY_MIN_RATINGS = 2;
 const MATCH_QUALITY_MAX_SCORE = 5;
-const MATCH_NOT_A_MATCH_COOLDOWN_MS = 30 * 24 * 60 * 60 * 1000;
+const MATCH_SETTINGS_DEFAULTS = Object.freeze({
+  notAMatchCooldownDays: 30,
+  autoBanReportThreshold: 3,
+  chatRetentionDays: 30,
+});
+const MATCH_SETTINGS_LIMITS = Object.freeze({
+  notAMatchCooldownDays: { min: 1, max: 365 },
+  autoBanReportThreshold: { min: 2, max: 20 },
+  chatRetentionDays: { min: 0, max: 3650 },
+});
 const MODERATOR_ROLES = new Set(['admin', 'moderator', 'viewer']);
 const CHAT_BLOCK_DURATION_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_ADMIN_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
@@ -220,6 +229,40 @@ function findPreferredMatchIndex(entries, startIndex, acceptsCandidate) {
 
 function makeClientPairKey(clientId1, clientId2) {
   return [clientId1, clientId2].sort().join(':');
+}
+
+function normalizeMatchSettings(value = {}, defaults = MATCH_SETTINGS_DEFAULTS) {
+  const settings = { ...MATCH_SETTINGS_DEFAULTS };
+  for (const [key, limits] of Object.entries(MATCH_SETTINGS_LIMITS)) {
+    const parsed = Number(value?.[key]);
+    if (Number.isInteger(parsed) && parsed >= limits.min && parsed <= limits.max) {
+      settings[key] = parsed;
+      continue;
+    }
+    const fallback = Number(defaults?.[key]);
+    if (Number.isInteger(fallback) && fallback >= limits.min && fallback <= limits.max) {
+      settings[key] = fallback;
+    }
+  }
+  return settings;
+}
+
+function parseMatchSettingsPatch(value) {
+  if (!isPlainObject(value)) return { error: 'Settings must be an object.' };
+  const settings = {};
+  for (const [key, limits] of Object.entries(MATCH_SETTINGS_LIMITS)) {
+    if (!(key in value)) continue;
+    const parsed = value[key];
+    if (!Number.isInteger(parsed) || parsed < limits.min || parsed > limits.max) {
+      return {
+        error: `${key} must be an integer between ${limits.min} and ${limits.max}.`,
+      };
+    }
+    settings[key] = parsed;
+  }
+  return Object.keys(settings).length
+    ? { value: settings }
+    : { error: 'No settings were provided.' };
 }
 
 function isPlainObject(value) {
@@ -889,8 +932,9 @@ function createChatStore(dataDirectory, retentionDays = 30) {
   }
 
   function pruneExpired() {
-    if (!Number.isFinite(retentionDays) || retentionDays <= 0) return;
-    const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+    const configuredDays = typeof retentionDays === 'function' ? retentionDays() : retentionDays;
+    if (!Number.isFinite(configuredDays) || configuredDays <= 0) return;
+    const cutoff = Date.now() - configuredDays * 24 * 60 * 60 * 1000;
     chats = chats.filter((chat) => {
       if (!chat.endedAt) return true;
       const endedAt = Date.parse(chat.endedAt);
@@ -982,6 +1026,15 @@ function createChatStore(dataDirectory, retentionDays = 30) {
         chat.lastActivityAt = endedAt;
         pruneExpired();
         await persist();
+      }),
+    prune: () =>
+      enqueue(async () => {
+        await initialize();
+        const before = chats.length;
+        pruneExpired();
+        const removed = before - chats.length;
+        if (removed > 0) await persist();
+        return removed;
       }),
     addFeedback: (roomId, feedback) =>
       enqueue(async () => {
@@ -1209,6 +1262,54 @@ function createChatStore(dataDirectory, retentionDays = 30) {
         const [removed] = chats.splice(index, 1);
         await persist();
         return copyValue(removed);
+      }),
+    flush: () => operationQueue,
+  };
+}
+
+function createSettingsStore(dataDirectory, defaults = MATCH_SETTINGS_DEFAULTS) {
+  const settingsFile = path.join(dataDirectory, 'settings.json');
+  let settings = normalizeMatchSettings(defaults);
+  let initialized = false;
+  let operationQueue = Promise.resolve();
+
+  function enqueue(operation) {
+    const task = operationQueue.then(operation, operation);
+    operationQueue = task.catch(() => undefined);
+    return task;
+  }
+
+  async function initialize() {
+    if (initialized) return;
+    await fs.mkdir(dataDirectory, { recursive: true });
+    try {
+      const contents = await fs.readFile(settingsFile, 'utf8');
+      settings = normalizeMatchSettings(JSON.parse(contents), defaults);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      settings = normalizeMatchSettings(defaults);
+    }
+    initialized = true;
+  }
+
+  async function persist() {
+    const temporaryFile = `${settingsFile}.${process.pid}.${Date.now()}.tmp`;
+    await fs.writeFile(temporaryFile, `${JSON.stringify(settings, null, 2)}\n`, 'utf8');
+    await fs.rename(temporaryFile, settingsFile);
+  }
+
+  return {
+    load: () =>
+      enqueue(async () => {
+        await initialize();
+        return copyValue(settings);
+      }),
+    update: (changes) =>
+      enqueue(async () => {
+        await initialize();
+        settings = { ...settings, ...changes };
+        await persist();
+        return copyValue(settings);
       }),
     flush: () => operationQueue,
   };
@@ -1488,8 +1589,14 @@ function createChatServer({
   const io = new Server(server, { maxHttpBufferSize: LIMITS.maxPayloadBytes });
   const reportStore = createReportStore(dataDir);
   const appealStore = createAppealStore(dataDir);
-  const retentionDays = Number.parseInt(process.env.CHAT_RETENTION_DAYS || '30', 10);
-  const chatStore = createChatStore(dataDir, Number.isFinite(retentionDays) ? retentionDays : 30);
+  const envRetentionDays = Number.parseInt(process.env.CHAT_RETENTION_DAYS || '30', 10);
+  const runtimeSettings = { ...MATCH_SETTINGS_DEFAULTS };
+  if (Number.isInteger(envRetentionDays)) {
+    // Keep the legacy negative environment value as the UI's explicit "retain indefinitely" mode.
+    runtimeSettings.chatRetentionDays = Math.max(0, envRetentionDays);
+  }
+  const settingsStore = createSettingsStore(dataDir, runtimeSettings);
+  const chatStore = createChatStore(dataDir, () => runtimeSettings.chatRetentionDays);
   const banStore = createBanStore(dataDir);
   const auditStore = createAuditStore(dataDir);
   const moderatorStore = createModeratorStore(dataDir);
@@ -1553,6 +1660,8 @@ function createChatServer({
   const bannedClients = new Map();
   const notAMatchCooldowns = new Map();
   let notAMatchCooldownsReady = false;
+  let settingsReady = false;
+  let settingsInitialization = Promise.resolve();
 
   // --- Shared (distributed) matchmaking state ---------------------------------------------
   // Opt-in: active only once a Redis command client connects (REDIS_URL set). While inactive,
@@ -1618,7 +1727,7 @@ function createChatServer({
     timestamps.push(now);
     recentReportsByClient.set(clientId, timestamps);
 
-    if (timestamps.length >= LIMITS.autoBan.reportThreshold) {
+    if (timestamps.length >= runtimeSettings.autoBanReportThreshold) {
       bannedClients.set(
         clientId,
         createBanRecord(clientId, now + LIMITS.autoBan.banDurationMs, {
@@ -2483,6 +2592,61 @@ function createChatServer({
     }
   });
 
+  app.get('/api/admin/settings', requireAdmin, requireAdminRole, (request, response) => {
+    settingsInitialization
+      .then(() => {
+        response.json({
+          settings: copyValue(runtimeSettings),
+          limits: copyValue(MATCH_SETTINGS_LIMITS),
+        });
+      })
+      .catch((error) => {
+        logError(error);
+        response.status(500).json({ error: 'Could not load runtime settings.' });
+      });
+  });
+
+  app.patch('/api/admin/settings', requireAdmin, requireAdminRole, async (request, response) => {
+    try {
+      await settingsInitialization;
+      const parsed = parseMatchSettingsPatch(request.body);
+      if (parsed.error) {
+        response.status(400).json({ error: parsed.error });
+        return;
+      }
+
+      const previous = copyValue(runtimeSettings);
+      const next = { ...runtimeSettings, ...parsed.value };
+      const changedFields = Object.keys(parsed.value).filter((key) => previous[key] !== next[key]);
+      if (!changedFields.length) {
+        response.json({ settings: previous, changedFields: [] });
+        return;
+      }
+
+      const saved = await settingsStore.update(next);
+      Object.assign(runtimeSettings, saved);
+      if (changedFields.includes('chatRetentionDays')) await chatStore.prune();
+      if (changedFields.includes('notAMatchCooldownDays')) {
+        notAMatchCooldowns.clear();
+        const pairs = await chatStore.getRecentNotAMatchPairs(getNotAMatchCooldownMs());
+        for (const pair of pairs) notAMatchCooldowns.set(pair.key, pair.expiresAt);
+      }
+      await recordModerationEvent(
+        {
+          type: 'settings_updated',
+          changedFields,
+          note: `Runtime settings updated: ${changedFields.join(', ')}.`,
+        },
+        request.admin,
+      );
+      broadcastModerationUpdate('settings', 'updated');
+      response.json({ settings: copyValue(runtimeSettings), changedFields });
+    } catch (error) {
+      logError(error);
+      response.status(500).json({ error: 'Could not update runtime settings.' });
+    }
+  });
+
   app.post('/api/admin/moderators', requireAdmin, requireAdminRole, async (request, response) => {
     try {
       const body = isPlainObject(request.body) ? request.body : {};
@@ -3077,11 +3241,15 @@ function createChatServer({
         : averageMatchWaitMs * 0.75 + averageWaitForPair * 0.25;
   }
 
+  function getNotAMatchCooldownMs() {
+    return runtimeSettings.notAMatchCooldownDays * 24 * 60 * 60 * 1000;
+  }
+
   function setNotAMatchCooldown(clientId1, clientId2, createdAt = Date.now()) {
     if (!isClientId(clientId1) || !isClientId(clientId2) || clientId1 === clientId2) return;
     const timestamp = typeof createdAt === 'string' ? Date.parse(createdAt) : createdAt;
     if (!Number.isFinite(timestamp)) return;
-    const expiresAt = timestamp + MATCH_NOT_A_MATCH_COOLDOWN_MS;
+    const expiresAt = timestamp + getNotAMatchCooldownMs();
     if (expiresAt <= Date.now()) return;
     const key = makeClientPairKey(clientId1, clientId2);
     notAMatchCooldowns.set(key, Math.max(notAMatchCooldowns.get(key) ?? 0, expiresAt));
@@ -3200,7 +3368,7 @@ function createChatServer({
   }
 
   function matchUsers() {
-    if (!notAMatchCooldownsReady) return false;
+    if (!settingsReady || !notAMatchCooldownsReady) return false;
     if (distributedEnabled()) {
       dMatch().catch(logError);
       return false;
@@ -4013,14 +4181,19 @@ function createChatServer({
   const matchingInterval = setInterval(matchUsers, 2000);
   matchingInterval.unref();
 
-  chatStore
-    .getRecentNotAMatchPairs(MATCH_NOT_A_MATCH_COOLDOWN_MS)
+  settingsInitialization = settingsStore
+    .load()
+    .then((savedSettings) => {
+      Object.assign(runtimeSettings, savedSettings);
+      return chatStore.getRecentNotAMatchPairs(getNotAMatchCooldownMs());
+    })
     .then((pairs) => {
       for (const pair of pairs) notAMatchCooldowns.set(pair.key, pair.expiresAt);
       log(`Loaded ${pairs.length} active not-a-match cooldown(s) from storage.`);
     })
     .catch(logError)
     .finally(() => {
+      settingsReady = true;
       notAMatchCooldownsReady = true;
       matchUsers();
     });
@@ -4039,6 +4212,7 @@ function createChatServer({
             reportStore.flush(),
             appealStore.flush(),
             chatStore.flush(),
+            settingsStore.flush(),
             banStore.flush(),
             moderatorStore.flush(),
             auditStore.flush(),
@@ -4082,6 +4256,7 @@ function createChatServer({
             await reportStore.flush();
             await chatStore.flush();
             await appealStore.flush();
+            await settingsStore.flush();
             await banStore.flush();
             await moderatorStore.flush();
             await auditStore.flush();
