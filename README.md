@@ -22,6 +22,8 @@ Anonymous, one-on-one chat with language-compatible matching. GhostChat does not
   bottom-sheet safety dialogs, and a compact responsive moderation console.
 - Install GhostChat to a phone home screen as a standalone PWA; supported browsers show an Install
   app button, while iOS Safari shows the Share > Add to Home Screen steps.
+- Enable optional Web Push notifications for new messages and edit your alias, language, and
+  notification preference in the browser-local Profile and settings dialog.
 - Show an expiring partner-typing indicator, preserve your reading position for new messages, and provide sound/browser notifications when the tab is hidden.
 - Recover gracefully from network drops: show offline/reconnecting status, retry automatically, and return a disconnected participant to the matching queue when connectivity resumes.
 - Ask for a post-chat rating (good fit, not a match, or unsafe) with an optional comment; unsafe feedback can report and block the partner after the chat ends.
@@ -57,7 +59,10 @@ site and choose **Install app** when the button appears. On iPhone/iPad Safari, 
 **Add to Home Screen**. A phone must reach the production site over HTTPS for service workers and
 browser installation; `localhost` is treated as secure only on the development machine. The PWA
 caches the interface shell for faster startup, but a network connection is still required for live
-matching and messages.
+matching and messages. Enable **New message notifications** in **Profile and settings**; the server
+stores only the browser's Web Push subscription and removes expired subscriptions automatically.
+Keep the generated `DATA_DIR/.push-vapid.keys` file safe and back it up separately from the JSON data
+snapshots.
 
 For development with automatic restart:
 
@@ -73,22 +78,25 @@ npm test
 
 ## Configuration
 
-| Variable                  | Default                       | Purpose                                                                                                           |
-| ------------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `PORT`                    | `3000`                        | HTTP and Socket.IO port.                                                                                          |
-| `DATA_DIR`                | `./data`                      | Directory where durable reports, appeals, bans, chat transcripts, moderator accounts, and audit logs are stored.  |
-| `BACKUP_DIR`              | `./backups`                   | Directory where timestamped JSON data snapshots are written by `npm run backup`.                                  |
-| `BACKUP_RETENTION`        | `14`                          | Number of snapshots to retain automatically; `0` disables pruning.                                                |
-| `BACKUP_INTERVAL_HOURS`   | `0`                           | Automatic backup interval when the server is running; `0` disables scheduled backups.                             |
-| `CHAT_RETENTION_DAYS`     | `30`                          | Initial default for completed-transcript retention. Set to `0` or a negative value to retain indefinitely.        |
-| `ADMIN_TOKEN`             | _(recommended for bootstrap)_ | Secret used to bootstrap the first named admin account and for emergency API access.                              |
-| `ADMIN_SESSION_TTL_HOURS` | `8`                           | Lifetime of the in-memory admin session created after sign-in.                                                    |
-| `ADMIN_COOKIE_SECURE`     | `auto`                        | Force the `Secure` flag on the admin cookie (`true`/`1`); it is automatic for HTTPS and production.               |
-| `ADMIN_PATH`              | `/admin`                      | Secret URL path for the moderation dashboard. Use a random path in production; `/admin` returns 404 when changed. |
-| `REDIS_URL`               | _(optional)_                  | Enables the Socket.IO Redis adapter for multi-instance deployments (e.g. `redis://localhost:6379`).               |
-| `PROFANITY_EXTRA`         | _(optional)_                  | Comma-separated extra words to mask, added to the built-in list.                                                  |
-| `PROFANITY_FILE`          | _(optional)_                  | Path to a JSON array of extra words to mask. Malformed or missing files are ignored.                              |
-| `TRUST_PROXY`             | `false`                       | Set to `true`/`1` when behind a trusted reverse proxy so per-IP limits use the `X-Forwarded-For` client IP.       |
+| Variable                  | Default                        | Purpose                                                                                                           |
+| ------------------------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| `PORT`                    | `3000`                         | HTTP and Socket.IO port.                                                                                          |
+| `DATA_DIR`                | `./data`                       | Directory where durable reports, appeals, bans, chat transcripts, moderator accounts, and audit logs are stored.  |
+| `BACKUP_DIR`              | `./backups`                    | Directory where timestamped JSON data snapshots are written by `npm run backup`.                                  |
+| `BACKUP_RETENTION`        | `14`                           | Number of snapshots to retain automatically; `0` disables pruning.                                                |
+| `BACKUP_INTERVAL_HOURS`   | `0`                            | Automatic backup interval when the server is running; `0` disables scheduled backups.                             |
+| `CHAT_RETENTION_DAYS`     | `30`                           | Initial default for completed-transcript retention. Set to `0` or a negative value to retain indefinitely.        |
+| `ADMIN_TOKEN`             | _(recommended for bootstrap)_  | Secret used to bootstrap the first named admin account and for emergency API access.                              |
+| `ADMIN_SESSION_TTL_HOURS` | `8`                            | Lifetime of the in-memory admin session created after sign-in.                                                    |
+| `ADMIN_COOKIE_SECURE`     | `auto`                         | Force the `Secure` flag on the admin cookie (`true`/`1`); it is automatic for HTTPS and production.               |
+| `ADMIN_PATH`              | `/admin`                       | Secret URL path for the moderation dashboard. Use a random path in production; `/admin` returns 404 when changed. |
+| `REDIS_URL`               | _(optional)_                   | Enables the Socket.IO Redis adapter for multi-instance deployments (e.g. `redis://localhost:6379`).               |
+| `PROFANITY_EXTRA`         | _(optional)_                   | Comma-separated extra words to mask, added to the built-in list.                                                  |
+| `PROFANITY_FILE`          | _(optional)_                   | Path to a JSON array of extra words to mask. Malformed or missing files are ignored.                              |
+| `TRUST_PROXY`             | `false`                        | Set to `true`/`1` when behind a trusted reverse proxy so per-IP limits use the `X-Forwarded-For` client IP.       |
+| `PUSH_VAPID_SUBJECT`      | `mailto:admin@ghostchat.local` | Contact subject used for Web Push VAPID authentication.                                                           |
+| `PUSH_VAPID_PUBLIC_KEY`   | _(auto-generated)_             | Public VAPID key used by browser push subscriptions.                                                              |
+| `PUSH_VAPID_PRIVATE_KEY`  | _(auto-generated)_             | Private VAPID key; keep secret. If omitted, keys are generated in `DATA_DIR/.push-vapid.keys`.                    |
 
 To enable moderation, set a strong token before starting the app:
 

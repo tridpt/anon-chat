@@ -1,10 +1,10 @@
-const CACHE_NAME = 'ghostchat-shell-v1';
+const CACHE_NAME = 'ghostchat-shell-v2';
 const APP_SHELL = [
   '/',
   '/index.html',
-  '/style.css?v=6',
-  '/i18n.js?v=2',
-  '/script.js?v=3',
+  '/style.css?v=7',
+  '/i18n.js?v=3',
+  '/script.js?v=4',
   '/manifest.webmanifest',
   '/icons/ghostchat-192.png',
   '/icons/ghostchat-512.png',
@@ -52,16 +52,48 @@ self.addEventListener('fetch', (event) => {
   }
 
   event.respondWith(
-    caches.match(request).then((cached) => {
-      if (cached) return cached;
-
-      return fetch(request).then((response) => {
+    fetch(request)
+      .then((response) => {
         if (response.ok) {
           const responseCopy = response.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(request, responseCopy));
         }
         return response;
-      });
+      })
+      .catch(() => caches.match(request)),
+  );
+});
+
+self.addEventListener('push', (event) => {
+  let payload = { title: 'GhostChat', body: 'You have a new message.', url: '/' };
+  try {
+    if (event.data) payload = { ...payload, ...event.data.json() };
+  } catch {
+    // Keep the default notification when a push payload is malformed.
+  }
+
+  event.waitUntil(
+    self.registration.showNotification(payload.title, {
+      body: payload.body,
+      icon: '/icons/ghostchat-192.png',
+      badge: '/icons/ghostchat-192.png',
+      tag: payload.tag || 'ghostchat-message',
+      data: { url: payload.url || '/' },
+    }),
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const targetUrl = event.notification.data?.url || '/';
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+      const existing = clients.find((client) => 'focus' in client);
+      if (existing) {
+        existing.navigate(targetUrl);
+        return existing.focus();
+      }
+      return self.clients.openWindow(targetUrl);
     }),
   );
 });

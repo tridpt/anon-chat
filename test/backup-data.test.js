@@ -236,9 +236,11 @@ test('creates scheduled backups when the server interval is enabled', async (t) 
   });
   await waitFor(async () => {
     const snapshots = await fs.readdir(directories.backupDir).catch(() => []);
-    return snapshots.length >= 1;
+    return snapshots.some((name) => /^\d{8}T\d{6}\.\d{3}Z(?:-\d+)?$/.test(name));
   });
-  const snapshots = await fs.readdir(directories.backupDir);
+  const snapshots = (await fs.readdir(directories.backupDir)).filter((name) =>
+    /^\d{8}T\d{6}\.\d{3}Z(?:-\d+)?$/.test(name),
+  );
   const manifest = JSON.parse(
     await fs.readFile(path.join(directories.backupDir, snapshots[0], 'manifest.json'), 'utf8'),
   );

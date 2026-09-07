@@ -1,10 +1,11 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
+const webpush = require('web-push');
 const path = require('path');
 const crypto = require('crypto');
 const fs = require('fs/promises');
-const { readFileSync } = require('fs');
+const { mkdirSync, readFileSync, renameSync, writeFileSync } = require('fs');
 const { backupData } = require('./scripts/backup-data');
 const {
   RestoreError,
@@ -514,6 +515,151 @@ function parseAppeal(data) {
 
 function copyValue(value) {
   return JSON.parse(JSON.stringify(value));
+}
+
+function isBase64Url(value) {
+  return typeof value === 'string' && /^[A-Za-z0-9_-]+$/.test(value);
+}
+
+function parsePushSubscription(value) {
+  if (!isPlainObject(value) || typeof value.endpoint !== 'string') {
+    return { error: 'A valid push subscription is required.' };
+  }
+
+  let endpoint;
+  try {
+    endpoint = new URL(value.endpoint);
+  } catch {
+    return { error: 'The push subscription endpoint is invalid.' };
+  }
+  if (endpoint.protocol !== 'https:' || endpoint.hostname.length > 255) {
+    return { error: 'The push subscription endpoint is invalid.' };
+  }
+
+  const keys = value.keys;
+  if (!isPlainObject(keys) || !isBase64Url(keys.p256dh) || !isBase64Url(keys.auth)) {
+    return { error: 'The push subscription keys are invalid.' };
+  }
+
+  return {
+    value: {
+      endpoint: endpoint.toString(),
+      expirationTime: Number.isFinite(value.expirationTime) ? value.expirationTime : null,
+      keys: { p256dh: keys.p256dh, auth: keys.auth },
+    },
+  };
+}
+
+function createPushSubscriptionStore(dataDirectory) {
+  const subscriptionsFile = path.join(dataDirectory, 'push-subscriptions.json');
+  let subscriptions = [];
+  let initialized = false;
+  let operationQueue = Promise.resolve();
+
+  function enqueue(operation) {
+    const task = operationQueue.then(operation, operation);
+    operationQueue = task.catch(() => undefined);
+    return task;
+  }
+
+  async function initialize() {
+    if (initialized) return;
+    await fs.mkdir(dataDirectory, { recursive: true });
+    try {
+      const contents = await fs.readFile(subscriptionsFile, 'utf8');
+      const parsed = JSON.parse(contents);
+      if (!Array.isArray(parsed)) throw new Error('Push subscription store must contain an array.');
+      subscriptions = parsed.filter(
+        (entry) =>
+          isPlainObject(entry) &&
+          isClientId(entry.clientId) &&
+          parsePushSubscription(entry.subscription).value,
+      );
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      subscriptions = [];
+    }
+    initialized = true;
+  }
+
+  async function persist() {
+    const temporaryFile = `${subscriptionsFile}.${process.pid}.${Date.now()}.tmp`;
+    await fs.writeFile(temporaryFile, `${JSON.stringify(subscriptions, null, 2)}\n`, 'utf8');
+    await fs.rename(temporaryFile, subscriptionsFile);
+  }
+
+  return {
+    upsert: (clientId, subscription) =>
+      enqueue(async () => {
+        await initialize();
+        const now = new Date().toISOString();
+        const index = subscriptions.findIndex(
+          (entry) =>
+            entry.clientId === clientId && entry.subscription.endpoint === subscription.endpoint,
+        );
+        const entry = {
+          clientId,
+          subscription: copyValue(subscription),
+          createdAt: index === -1 ? now : subscriptions[index].createdAt,
+          updatedAt: now,
+        };
+        if (index === -1) subscriptions.push(entry);
+        else subscriptions[index] = entry;
+        await persist();
+        return copyValue(entry);
+      }),
+    listForClient: (clientId) =>
+      enqueue(async () => {
+        await initialize();
+        return copyValue(subscriptions.filter((entry) => entry.clientId === clientId));
+      }),
+    remove: (clientId, endpoint) =>
+      enqueue(async () => {
+        await initialize();
+        const before = subscriptions.length;
+        subscriptions = subscriptions.filter(
+          (entry) => !(entry.clientId === clientId && entry.subscription.endpoint === endpoint),
+        );
+        if (subscriptions.length !== before) await persist();
+      }),
+    flush: () => operationQueue,
+  };
+}
+
+function loadPushVapidConfig(dataDirectory, env = process.env, logger = console) {
+  const subject = env.PUSH_VAPID_SUBJECT || 'mailto:admin@ghostchat.local';
+  const publicKey = env.PUSH_VAPID_PUBLIC_KEY;
+  const privateKey = env.PUSH_VAPID_PRIVATE_KEY;
+  if (publicKey && privateKey) return { subject, publicKey, privateKey };
+
+  // Keep the private key out of the JSON data backup set; operators should back it up separately.
+  const configFile = path.join(dataDirectory, '.push-vapid.keys');
+  try {
+    const stored = JSON.parse(readFileSync(configFile, 'utf8'));
+    if (stored?.publicKey && stored?.privateKey) {
+      return {
+        subject: stored.subject || subject,
+        publicKey: stored.publicKey,
+        privateKey: stored.privateKey,
+      };
+    }
+  } catch (error) {
+    if (error.code !== 'ENOENT') logger.warn?.(`Could not load push VAPID keys: ${error.message}`);
+  }
+
+  const generated = webpush.generateVAPIDKeys();
+  try {
+    mkdirSync(dataDirectory, { recursive: true });
+    const temporaryFile = `${configFile}.${process.pid}.${Date.now()}.tmp`;
+    writeFileSync(temporaryFile, `${JSON.stringify({ subject, ...generated }, null, 2)}\n`, {
+      encoding: 'utf8',
+      mode: 0o600,
+    });
+    renameSync(temporaryFile, configFile);
+  } catch (error) {
+    logger.warn?.(`Could not persist generated push VAPID keys: ${error.message}`);
+  }
+  return { subject, ...generated };
 }
 
 function normalizeAdminPath(value) {
@@ -1598,8 +1744,21 @@ function createChatServer({
   const settingsStore = createSettingsStore(dataDir, runtimeSettings);
   const chatStore = createChatStore(dataDir, () => runtimeSettings.chatRetentionDays);
   const banStore = createBanStore(dataDir);
+  const pushSubscriptionStore = createPushSubscriptionStore(dataDir);
   const auditStore = createAuditStore(dataDir);
   const moderatorStore = createModeratorStore(dataDir);
+  const pushVapidConfig = loadPushVapidConfig(dataDir, process.env, logger);
+  let pushEnabled = true;
+  try {
+    webpush.setVapidDetails(
+      pushVapidConfig.subject,
+      pushVapidConfig.publicKey,
+      pushVapidConfig.privateKey,
+    );
+  } catch (error) {
+    pushEnabled = false;
+    logger.warn?.(`Web push is disabled: ${error.message}`);
+  }
   const httpRateLimiter = createIpRateLimiter(LIMITS.httpRate);
   const connectionRateLimiter = createIpRateLimiter(LIMITS.connectionRate);
   const adminLoginRateLimiter = createIpRateLimiter(LIMITS.adminLoginRate);
@@ -1909,6 +2068,24 @@ function createChatServer({
     if (typeof logger.error === 'function') {
       logger.error(error);
     }
+  }
+
+  async function sendPushNotification(clientId, payload) {
+    if (!pushEnabled || !isClientId(clientId)) return;
+    const entries = await pushSubscriptionStore.listForClient(clientId);
+    await Promise.all(
+      entries.map(async (entry) => {
+        try {
+          await webpush.sendNotification(entry.subscription, JSON.stringify(payload), { TTL: 120 });
+        } catch (error) {
+          if (error.statusCode === 404 || error.statusCode === 410) {
+            await pushSubscriptionStore.remove(clientId, entry.subscription.endpoint);
+            return;
+          }
+          logError(error);
+        }
+      }),
+    );
   }
 
   function getBootstrapPrincipal() {
@@ -2273,6 +2450,14 @@ function createChatServer({
       totalMatches: matches,
       averageMatchWaitMs: averageMatchWaitMs === null ? null : Math.round(averageMatchWaitMs),
       activeBans: listActiveBans().length,
+    });
+  });
+
+  app.get('/api/push/config', (request, response) => {
+    response.set('Cache-Control', 'no-store');
+    response.json({
+      enabled: pushEnabled,
+      publicKey: pushEnabled ? pushVapidConfig.publicKey : null,
     });
   });
 
@@ -3806,6 +3991,7 @@ function createChatServer({
     socket.isQueued = false;
     socket.isLoggingIn = false;
     socket.isTyping = false;
+    socket.documentHidden = false;
     socket.typingTimer = null;
 
     socket.on(
@@ -3842,6 +4028,10 @@ function createChatServer({
         socket.clientId = parsed.value.clientId;
         socket.blockedClientIds = new Set(parsed.value.blockedClientIds);
         socket.hasLoggedIn = true;
+        socket.emit('push_ready', {
+          enabled: pushEnabled,
+          publicKey: pushEnabled ? pushVapidConfig.publicKey : null,
+        });
         socket.isLoggingIn = true;
         try {
           socket.matchQualityScore = await chatStore.getMatchQualityScore(socket.clientId);
@@ -3897,6 +4087,18 @@ function createChatServer({
           timestamp: new Date().toISOString(),
         };
         chatStore.appendMessage(roomId, storedMessage).catch(logError);
+        const partnerSocket = [...io.sockets.sockets.values()].find(
+          (candidate) =>
+            candidate.clientId === socket.partnerInfo?.clientId && candidate.currentRoom === roomId,
+        );
+        if (partnerSocket?.documentHidden) {
+          sendPushNotification(socket.partnerInfo.clientId, {
+            title: `GhostChat - ${socket.username}`,
+            body: text,
+            url: '/',
+            tag: `ghostchat-message-${roomId}`,
+          }).catch(logError);
+        }
         if (distributedEnabled()) {
           io.serverSideEmit('anon:mm:chat_message', {
             roomId,
@@ -3931,6 +4133,30 @@ function createChatServer({
       'typing',
       safelyHandle(socket, () => {
         startSocketTyping(socket);
+      }),
+    );
+
+    socket.on('visibility', (hidden) => {
+      socket.documentHidden = hidden === true;
+    });
+
+    socket.on(
+      'registerPushSubscription',
+      safelyHandle(socket, async (subscription) => {
+        if (!socket.hasLoggedIn || !pushEnabled) return;
+        const parsed = parsePushSubscription(subscription);
+        if (parsed.error) return;
+        await pushSubscriptionStore.upsert(socket.clientId, parsed.value);
+        socket.emit('push_subscription_updated', { subscribed: true });
+      }),
+    );
+
+    socket.on(
+      'removePushSubscription',
+      safelyHandle(socket, async (endpoint) => {
+        if (!socket.hasLoggedIn || typeof endpoint !== 'string') return;
+        await pushSubscriptionStore.remove(socket.clientId, endpoint);
+        socket.emit('push_subscription_updated', { subscribed: false });
       }),
     );
 
@@ -4214,6 +4440,7 @@ function createChatServer({
             chatStore.flush(),
             settingsStore.flush(),
             banStore.flush(),
+            pushSubscriptionStore.flush(),
             moderatorStore.flush(),
             auditStore.flush(),
           ]);
@@ -4258,6 +4485,7 @@ function createChatServer({
             await appealStore.flush();
             await settingsStore.flush();
             await banStore.flush();
+            await pushSubscriptionStore.flush();
             await moderatorStore.flush();
             await auditStore.flush();
             await backupQueue;

@@ -21,7 +21,7 @@
       rel="stylesheet"
       href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
     />
-    <link rel="stylesheet" href="style.css?v=6" />
+    <link rel="stylesheet" href="style.css?v=7" />
   </head>
   <body>
     <div class="app-container">
@@ -63,6 +63,17 @@
       >
         <i class="fa-solid fa-download" aria-hidden="true"></i>
         <span data-i18n="install_app">Install</span>
+      </button>
+      <button
+        id="profile-btn"
+        type="button"
+        class="profile-btn"
+        data-i18n-title="profile_open"
+        title="Profile and settings"
+        aria-label="Profile and settings"
+        aria-controls="profile-dialog"
+      >
+        <i class="fa-solid fa-sliders" aria-hidden="true"></i>
       </button>
 
       <main class="chat-interface">
@@ -586,11 +597,65 @@
             </div>
           </section>
         </dialog>
+
+        <dialog
+          id="profile-dialog"
+          class="report-dialog profile-dialog"
+          aria-labelledby="profile-title"
+        >
+          <form id="profile-form" class="report-form">
+            <div class="profile-heading">
+              <span class="profile-avatar" aria-hidden="true"
+                ><i class="fa-solid fa-ghost"></i
+              ></span>
+              <div>
+                <h2 id="profile-title" data-i18n="profile_title">Your profile</h2>
+                <p data-i18n="profile_intro">Saved only in this browser. No account is created.</p>
+              </div>
+            </div>
+            <label for="profile-alias" data-i18n="profile_alias_label">Alias</label>
+            <input
+              id="profile-alias"
+              type="text"
+              maxlength="20"
+              autocomplete="nickname"
+              data-i18n-placeholder="alias_placeholder"
+              placeholder="Your Alias..."
+            />
+            <label for="profile-language" data-i18n="profile_language_label">Chat language</label>
+            <select id="profile-language">
+              <option value="any" data-i18n="lang_any">Any language</option>
+              <option value="vi">Tiếng Việt</option>
+              <option value="en">English</option>
+            </select>
+            <fieldset class="profile-setting-group">
+              <legend data-i18n="profile_notifications_title">Notifications</legend>
+              <label class="profile-toggle">
+                <input id="push-notifications" type="checkbox" />
+                <span>
+                  <strong data-i18n="profile_push_label">New message notifications</strong>
+                  <small id="push-notifications-detail" data-i18n="profile_push_desc"
+                    >Receive a notification when your chat partner messages you.</small
+                  >
+                </span>
+              </label>
+            </fieldset>
+            <p id="profile-feedback" class="form-error" role="status" aria-live="polite" hidden></p>
+            <div class="dialog-actions">
+              <button id="profile-cancel" type="button" class="btn-secondary" data-i18n="cancel">
+                Cancel
+              </button>
+              <button type="submit" class="btn-primary" data-i18n="profile_save">
+                Save settings
+              </button>
+            </div>
+          </form>
+        </dialog>
       </main>
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
-    <script src="i18n.js?v=2"></script>
-    <script src="script.js?v=3"></script>
+    <script src="i18n.js?v=3"></script>
+    <script src="script.js?v=4"></script>
   </body>
 </html>

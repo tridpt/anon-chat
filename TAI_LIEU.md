@@ -26,7 +26,7 @@ Mỗi khách truy cập được gán một `clientId` ngẫu nhiên lưu trong 
 | Hàng đợi   | Hiển thị số người đang chờ, ước tính thời gian chờ, số người trực tuyến                                                                                                              |
 | Cảm xúc    | Emoji picker khi soạn tin; thả reaction emoji lên từng tin nhắn                                                                                                                      |
 | Giao diện  | Chuyển dark/light theme; đổi ngôn ngữ giao diện Việt/Anh (i18n); mobile-first với khung chat theo bàn phím và vùng an toàn màn hình; cài như PWA lên màn hình chính                  |
-| Thông báo  | Báo trình duyệt khi được ghép cặp/có tin mới lúc tab ẩn; badge + nút xem tin mới khi đang đọc phía trên                                                                              |
+| Thông báo  | Báo trình duyệt khi được ghép cặp/có tin mới lúc tab ẩn; Web Push tùy chọn cho tin nhắn mới; badge + nút xem tin mới khi đang đọc phía trên                                          |
 | An toàn    | Bỏ qua (skip), chặn (block) có xác nhận, bỏ chặn, báo cáo với lý do, đánh giá sau chat                                                                                               |
 | Phản hồi   | Đánh giá sau chat kèm lý do nhanh khi không phù hợp; admin xem tỷ lệ, xu hướng 14 ngày, lý do không phù hợp và lọc chat không an toàn                                                |
 | Kiểm duyệt | Lọc từ ngữ xấu, giới hạn link, tự động cấm theo số report; admin chỉnh thông số runtime tại trang `/admin`                                                                           |
@@ -340,7 +340,7 @@ Một trang đơn (SPA-lite) gồm ba "màn hình" chuyển đổi bằng class 
 - **`#waiting-screen`** — spinner, tiêu đề/mô tả trạng thái, dòng trạng thái hàng đợi.
 - **`#chat-screen`** — header (tên đối phương, trạng thái, sở thích chung, nút Report/Block/Skip), panel icebreaker, khung tin nhắn, chỉ báo gõ, vùng nhập (nút emoji + ô nhập + nút gửi).
 
-Hai `<dialog>`: `#report-dialog` (form báo cáo) và `#blocked-dialog` (danh sách người đã chặn). Hai nút nổi góc trên phải: đổi theme và đổi ngôn ngữ giao diện.
+Các `<dialog>` gồm báo cáo, danh sách người đã chặn, khiếu nại ban, cài PWA và **Hồ sơ & cài đặt**. Hồ sơ lưu alias/ngôn ngữ trong trình duyệt; người dùng có thể bật Web Push tin nhắn mới nếu trình duyệt hỗ trợ.
 
 Thứ tự nạp script: `socket.io.js` → `i18n.js` → `script.js`.
 
@@ -349,7 +349,7 @@ Thứ tự nạp script: `socket.io.js` → `i18n.js` → `script.js`.
 Các nhóm logic chính:
 
 - **Âm thanh** (`initAudio`, `playBeep`) — dùng Web Audio API tạo tiếng "ting" khi ghép và "pop" khi có tin (khởi tạo sau tương tác người dùng).
-- **Danh tính & lưu trữ** — `getOrCreateClientId` (localStorage), `getBlockedPartners`/`saveBlockedPartners`, ghi nhớ xác nhận an toàn, theme, ngôn ngữ.
+- **Danh tính & lưu trữ** — `getOrCreateClientId` (localStorage), `getBlockedPartners`/`saveBlockedPartners`, hồ sơ alias/ngôn ngữ, tùy chọn push, ghi nhớ xác nhận an toàn, theme, ngôn ngữ.
 - **i18n bootstrap** — `t(key, params)`, áp dụng dịch tĩnh, nút đổi ngôn ngữ.
 - **Sở thích** — chip bật/tắt đồng bộ với ô nhập (`getInterestTokens`, `syncInterestOptions`).
 - **Quản lý màn hình** — `showScreen(id)` (đóng emoji panel khi rời màn chat).
@@ -357,7 +357,7 @@ Các nhóm logic chính:
 - **Theme** — `applyTheme` đặt `data-theme` trên `<html>`, đổi icon mặt trăng/mặt trời.
 - **Emoji picker** — panel 70 emoji, chèn tại vị trí con trỏ, giới hạn 500 ký tự.
 - **Reactions** — picker nổi cạnh tin nhắn, gửi `reactMessage`, gom đếm và render chip qua sự kiện `message_reaction`.
-- **Thông báo** — xin quyền lúc login; `notify` chỉ bắn khi `document.hidden`. Khi người dùng không ở cuối khung chat, tin đến không kéo màn hình xuống mà tăng badge trên tab và hiện nút xem tin mới.
+- **Thông báo** — `notify` dùng thông báo trình duyệt khi tab ẩn; Web Push được đăng ký từ hộp Hồ sơ & cài đặt sau khi người dùng đồng ý. Server chỉ gửi push khi socket đối tác đang ở trạng thái nền, và service worker hiển thị notification khi app không ở foreground.
 - **Đang nhập** — client tự gửi `stop_typing` khi xóa hết nội dung/gửi tin/rời chat; server chỉ relay lúc bắt đầu trạng thái gõ và tự hết hạn sau 3 giây để chỉ báo không bị kẹt.
 - **Khôi phục kết nối** — Socket.IO tự thử lại khi mất mạng. Client hiển thị banner offline/reconnecting, giữ hồ sơ ẩn danh trong bộ nhớ, và gửi lại `login` sau khi nối lại. Vì room cũ không còn an toàn sau ngắt kết nối, người đang chat được thông báo kết thúc phiên và quay lại hàng đợi thay vì cố khôi phục room cũ.
 - **Chặn trong chat** — nút Chặn mở `#block-dialog`; chỉ sau sự kiện `partner_blocked` từ server thì client mới lưu người bị chặn vào localStorage.
@@ -544,6 +544,8 @@ Khuyến nghị production: HTTPS, rate limit ở tầng proxy/IP, công bố ch
 - `data/resolved-reports.json` và `data/moderation-log.json` — báo cáo đã xử lý và nhật ký thao tác moderator (kèm actor).
 - `data/appeals.json` — các khiếu nại ban, snapshot lệnh cấm, trạng thái và quyết định moderator.
 - `data/moderators.json` — tài khoản moderator, role, trạng thái, và hash mật khẩu salted `scrypt`; không commit hoặc chia sẻ file này.
+- `data/push-subscriptions.json` — subscription Web Push theo `clientId`; chỉ tạo khi người dùng bật thông báo.
+- `data/.push-vapid.keys` — cặp khóa VAPID riêng của server (không phải JSON backup); phải bảo vệ và sao lưu riêng.
 - Các file ghi nguyên tử (`.tmp` + `rename`) và tuần tự hóa qua hàng đợi thao tác. Thư mục `data/` nằm trong `.gitignore`.
 
 ---
@@ -582,4 +584,4 @@ Khi bật `REDIS_URL`, hàng đợi và phòng ghép cặp được chia sẻ qu
 - **Log đầy lỗi `ECONNREFUSED ...:6379`?** `REDIS_URL` trỏ tới Redis không chạy. App vẫn hoạt động một-instance; bỏ `REDIS_URL` hoặc khởi động Redis.
 - **Reaction/emoji không hiện?** Kiểm tra `i18n.js` và `script.js` được nạp đúng thứ tự; xem console trình duyệt.
 - **Báo cáo/lệnh cấm mất sau redeploy Docker?** Chưa mount volume `/app/data`. Mount volume bền vững.
-- **Thông báo trình duyệt không hiện?** Chỉ bắn khi tab ẩn và đã cấp quyền Notification; một số trình duyệt yêu cầu HTTPS.
+- **Thông báo không hiện?** Mở **Hồ sơ & cài đặt**, bật **Thông báo tin nhắn mới**, cấp quyền Notification, dùng HTTPS (localhost chỉ phù hợp để thử trên máy phát triển). Push chỉ hoạt động khi đối tác gửi tin trong phiên chat còn kết nối.

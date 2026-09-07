@@ -108,6 +108,15 @@ const langToggleLabel = document.getElementById('lang-toggle-label');
 const installAppBtn = document.getElementById('install-app-btn');
 const pwaInstallDialog = document.getElementById('pwa-install-dialog');
 const pwaInstallClose = document.getElementById('pwa-install-close');
+const profileBtn = document.getElementById('profile-btn');
+const profileDialog = document.getElementById('profile-dialog');
+const profileForm = document.getElementById('profile-form');
+const profileAlias = document.getElementById('profile-alias');
+const profileLanguage = document.getElementById('profile-language');
+const pushNotifications = document.getElementById('push-notifications');
+const pushNotificationsDetail = document.getElementById('push-notifications-detail');
+const profileFeedback = document.getElementById('profile-feedback');
+const profileCancel = document.getElementById('profile-cancel');
 
 let deferredInstallPrompt = null;
 
@@ -163,6 +172,146 @@ if ('serviceWorker' in navigator) {
   });
 }
 
+function showProfileFeedback(message = '') {
+  profileFeedback.textContent = message;
+  profileFeedback.hidden = !message;
+}
+
+function applySavedProfileToLogin() {
+  usernameInput.value = savedProfile.alias;
+  setLanguageValue(savedProfile.language);
+}
+
+function isPushSupported() {
+  return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+}
+
+async function currentPushSubscription() {
+  if (!isPushSupported()) return null;
+  const registration = await navigator.serviceWorker.ready;
+  return registration.pushManager.getSubscription();
+}
+
+function updatePushControl({ subscription = null } = {}) {
+  const secure = window.isSecureContext;
+  const supported = isPushSupported();
+  const blocked = supported && Notification.permission === 'denied';
+  pushNotifications.disabled = !secure || !supported || blocked;
+  pushNotifications.checked = Boolean(subscription) || (pushPreferenceEnabled() && !blocked);
+
+  if (!secure) {
+    pushNotificationsDetail.textContent = t('profile_push_secure');
+  } else if (!supported) {
+    pushNotificationsDetail.textContent = t('profile_push_browser');
+  } else if (blocked) {
+    pushNotificationsDetail.textContent = t('profile_push_blocked');
+  } else {
+    pushNotificationsDetail.textContent = t('profile_push_supported');
+  }
+}
+
+async function openProfileDialog() {
+  profileAlias.value = savedProfile.alias || usernameInput.value.trim();
+  profileLanguage.value = savedProfile.language || languageInput.value;
+  showProfileFeedback();
+  try {
+    updatePushControl({ subscription: await currentPushSubscription() });
+  } catch {
+    updatePushControl();
+  }
+  profileDialog.showModal();
+}
+
+function urlBase64ToUint8Array(value) {
+  const padded = `${value}${'='.repeat((4 - (value.length % 4)) % 4)}`
+    .replace(/-/g, '+')
+    .replace(/_/g, '/');
+  const raw = window.atob(padded);
+  return Uint8Array.from(raw, (character) => character.charCodeAt(0));
+}
+
+async function savePushSubscription(subscription) {
+  if (socket.connected && hasActiveSession) {
+    socket.emit('registerPushSubscription', subscription.toJSON());
+  }
+}
+
+async function enablePushNotifications() {
+  const permission = await Notification.requestPermission();
+  if (permission !== 'granted') throw new Error('push_permission_denied');
+
+  const configResponse = await fetch('/api/push/config', { cache: 'no-store' });
+  const config = await configResponse.json();
+  if (!configResponse.ok || !config.enabled || !config.publicKey) {
+    throw new Error('push_config_failed');
+  }
+
+  const registration = await navigator.serviceWorker.ready;
+  let subscription = await registration.pushManager.getSubscription();
+  if (!subscription) {
+    subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(config.publicKey),
+    });
+  }
+  await savePushSubscription(subscription);
+  savePushPreference(true);
+  return subscription;
+}
+
+async function disablePushNotifications() {
+  const subscription = await currentPushSubscription();
+  if (subscription) {
+    if (socket.connected && hasActiveSession) {
+      socket.emit('removePushSubscription', subscription.endpoint);
+    }
+    await subscription.unsubscribe();
+  }
+  savePushPreference(false);
+}
+
+profileBtn.addEventListener('click', openProfileDialog);
+profileCancel.addEventListener('click', () => profileDialog.close());
+profileForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const nextProfile = {
+    alias: profileAlias.value.trim().slice(0, 20),
+    language: profileLanguage.value,
+  };
+  saveProfile(nextProfile);
+  usernameInput.value = nextProfile.alias;
+  setLanguageValue(nextProfile.language);
+
+  try {
+    if (!pushNotifications.disabled) {
+      if (pushNotifications.checked) await enablePushNotifications();
+      else await disablePushNotifications();
+    }
+    showProfileFeedback(t('profile_saved'));
+    window.setTimeout(() => profileDialog.close(), 600);
+  } catch {
+    updatePushControl();
+    showProfileFeedback(t('profile_push_failed'));
+  }
+});
+
+socket.on('push_ready', ({ enabled, publicKey } = {}) => {
+  currentPushSubscription()
+    .then((subscription) => {
+      if (!subscription) return;
+      if (enabled && publicKey && pushPreferenceEnabled()) {
+        socket.emit('registerPushSubscription', subscription.toJSON());
+      } else {
+        socket.emit('removePushSubscription', subscription.endpoint);
+      }
+    })
+    .catch(() => {});
+});
+
+document.addEventListener('visibilitychange', () => {
+  if (socket.connected) socket.emit('visibility', document.hidden);
+});
+
 function updateViewportHeight() {
   const viewportHeight = window.visualViewport?.height || window.innerHeight;
   document.documentElement.style.setProperty('--app-height', `${Math.round(viewportHeight)}px`);
@@ -202,6 +351,8 @@ const BLOCKED_PARTNERS_KEY = 'ghostchat-blocked-partners';
 const LEGACY_BLOCKED_CLIENT_IDS_KEY = 'ghostchat-blocked-client-ids';
 const SAFETY_ACKNOWLEDGEMENT_KEY = 'ghostchat-safety-acknowledged-v1';
 const THEME_KEY = 'ghostchat-theme';
+const PROFILE_KEY = 'ghostchat-profile-v1';
+const PUSH_NOTIFICATIONS_KEY = 'ghostchat-push-notifications';
 const CLIENT_ID_PATTERN = /^[A-Za-z0-9_-]{16,64}$/;
 const MAX_BLOCKED_CLIENT_IDS = 100;
 
@@ -221,6 +372,7 @@ let pendingBlock = null;
 let pendingFeedback = null;
 let feedbackSubmitting = false;
 let reconnectNeedsNewMatch = false;
+let savedProfile = getSavedProfile();
 const defaultDocumentTitle = document.title;
 const clientId = getOrCreateClientId();
 const blockedPartners = getBlockedPartners();
@@ -269,6 +421,43 @@ function getOrCreateClientId() {
     return newId;
   } catch {
     return createClientId();
+  }
+}
+
+function getSavedProfile() {
+  try {
+    const profile = JSON.parse(window.localStorage.getItem(PROFILE_KEY) || '{}');
+    return {
+      alias: typeof profile.alias === 'string' ? profile.alias.slice(0, 20) : '',
+      language: ['any', 'vi', 'en'].includes(profile.language) ? profile.language : 'any',
+    };
+  } catch {
+    return { alias: '', language: 'any' };
+  }
+}
+
+function saveProfile(profile) {
+  savedProfile = profile;
+  try {
+    window.localStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
+  } catch {
+    // The active session can still use settings when browser storage is unavailable.
+  }
+}
+
+function savePushPreference(enabled) {
+  try {
+    window.localStorage.setItem(PUSH_NOTIFICATIONS_KEY, enabled ? 'true' : 'false');
+  } catch {
+    // The subscription is still stored server-side when local storage is unavailable.
+  }
+}
+
+function pushPreferenceEnabled() {
+  try {
+    return window.localStorage.getItem(PUSH_NOTIFICATIONS_KEY) === 'true';
+  } catch {
+    return false;
   }
 }
 
@@ -1127,18 +1316,9 @@ socket.on('message_reaction', (data) => {
 });
 
 // Browser notifications
-function ensureNotificationPermission() {
+function notify(title, body, { skipWhenPushEnabled = false } = {}) {
   try {
-    if ('Notification' in window && Notification.permission === 'default') {
-      Notification.requestPermission().catch(() => {});
-    }
-  } catch {
-    // Notifications are optional; ignore environments without support.
-  }
-}
-
-function notify(title, body) {
-  try {
+    if (skipWhenPushEnabled && pushPreferenceEnabled()) return;
     if ('Notification' in window && Notification.permission === 'granted' && document.hidden) {
       new Notification(title, { body });
     }
@@ -1201,7 +1381,7 @@ document.addEventListener('i18n:changed', () => {
   languageValue.textContent = languageOptionLabel(languageInput.value);
 });
 
-setLanguageValue('any');
+applySavedProfileToLogin();
 
 // 1. Login Logic
 loginForm.addEventListener('submit', (e) => {
@@ -1215,10 +1395,9 @@ loginForm.addEventListener('submit', (e) => {
 
   // Initialize audio context on user interaction
   initAudio();
-  ensureNotificationPermission();
-
   myInterests = interestsInput.value.trim();
   myLanguage = languageInput.value;
+  saveProfile({ alias: myUsername, language: myLanguage });
   safetyAcknowledged = true;
   saveSafetyAcknowledgement();
   hasActiveSession = true;
@@ -1513,7 +1692,7 @@ socket.on('message', (msg) => {
   if (isIncoming) {
     setPartnerTyping(false);
     playBeep('message'); // Play incoming message sound
-    notify(t('notify_message', { name: msg.username }), msg.text);
+    notify(t('notify_message', { name: msg.username }), msg.text, { skipWhenPushEnabled: true });
     if (preserveScroll) noteIncomingMessage();
   }
   outputMessage(msg, { scroll: !preserveScroll });

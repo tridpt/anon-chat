@@ -1656,6 +1656,36 @@ test('exposes runtime metrics on the health endpoint', async (t) => {
   }
 });
 
+test('exposes PWA assets and advertises Web Push configuration', async (t) => {
+  const url = await createTestServer(t);
+  const [page, manifest, serviceWorker, pushConfig] = await Promise.all([
+    fetch(`${url}/`),
+    fetch(`${url}/manifest.webmanifest`),
+    fetch(`${url}/sw.js`),
+    fetch(`${url}/api/push/config`),
+  ]);
+  assert.equal(page.status, 200);
+  assert.match(await page.text(), /manifest\.webmanifest/);
+  assert.equal(manifest.status, 200);
+  assert.equal(manifest.headers.get('content-type').split(';')[0], 'application/manifest+json');
+  assert.equal(serviceWorker.status, 200);
+  assert.match(await serviceWorker.text(), /notificationclick/);
+  assert.equal(pushConfig.status, 200);
+  const config = await pushConfig.json();
+  assert.equal(config.enabled, true);
+  assert.match(config.publicKey, /^[A-Za-z0-9_-]{80,}$/);
+});
+
+test('sends Web Push configuration to an authenticated chat socket', async (t) => {
+  const url = await createTestServer(t);
+  const socket = await connectClient(t, url);
+  const pushReady = waitForEvent(socket, 'push_ready');
+  login(socket, { username: 'Push user', interests: '', clientId: 'push-user-123456' });
+  const payload = await pushReady;
+  assert.equal(payload.enabled, true);
+  assert.match(payload.publicKey, /^[A-Za-z0-9_-]{80,}$/);
+});
+
 test('persists auto-bans across server restarts', async (t) => {
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'anon-chat-ban-'));
   t.after(() => fs.rm(dataDir, { recursive: true, force: true }));

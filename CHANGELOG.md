@@ -11,6 +11,9 @@ and the project follows [Semantic Versioning](https://semver.org/).
 
 - Installable PWA support with a home-screen app manifest, offline shell cache, branded icons,
   and an in-app install prompt (plus iOS Safari instructions).
+- Web Push notifications for new messages, with browser-level opt-in and automatic cleanup of
+  expired subscriptions.
+- A browser-local Profile and settings dialog for alias, language, and notification preferences.
 - A cancel button on the waiting screen to leave the queue and return to login.
 - Runtime-configurable profanity list via `PROFANITY_EXTRA` (comma-separated words) and
   `PROFANITY_FILE` (a JSON array), both additive to the built-in defaults.
