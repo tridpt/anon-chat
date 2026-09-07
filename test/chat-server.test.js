@@ -423,6 +423,56 @@ test('stores one post-chat rating and exposes feedback totals to admins', async 
   assert.equal(invalidFilter.status, 400);
 });
 
+test('stores a not-a-match reason and summarizes it for admins', async (t) => {
+  const adminToken = 'test-admin-token-123';
+  const url = await createTestServer(t, { adminToken });
+  const alice = await connectClient(t, url);
+  const bob = await connectClient(t, url);
+  const aliceMatched = waitForEvent(alice, 'matched');
+  const bobMatched = waitForEvent(bob, 'matched');
+  login(alice, { username: 'Alice', interests: 'books' });
+  login(bob, { username: 'Bob', interests: 'books' });
+  const match = await aliceMatched;
+  await bobMatched;
+
+  const bobLeft = waitForEvent(bob, 'partner_left');
+  alice.emit('skip');
+  await bobLeft;
+
+  const received = waitForEvent(alice, 'chat_rating_received');
+  alice.emit('rateChat', {
+    chatId: match.chatId,
+    rating: 'not_a_match',
+    notAMatchReason: 'language_mismatch',
+  });
+  await received;
+
+  const invalidReason = waitForEvent(bob, 'app_error');
+  bob.emit('rateChat', {
+    chatId: match.chatId,
+    rating: 'positive',
+    notAMatchReason: 'language_mismatch',
+  });
+  assert.equal((await invalidReason).code, 'invalid_feedback');
+
+  const headers = { Authorization: `Bearer ${adminToken}` };
+  const analytics = await (await fetch(`${url}/api/admin/chat-feedback`, { headers })).json();
+  assert.deepEqual(analytics.notAMatchReasons, {
+    total: 1,
+    classifiedTotal: 1,
+    unclassified: 0,
+    reasons: {
+      language_mismatch: 1,
+      different_interests: 0,
+      conversation_style: 0,
+      other: 0,
+    },
+  });
+
+  const chats = await (await fetch(`${url}/api/admin/chats`, { headers })).json();
+  assert.equal(chats.chats[0].feedback[0].notAMatchReason, 'language_mismatch');
+});
+
 test('allows reporting and blocking a partner from the post-chat feedback flow', async (t) => {
   const adminToken = 'test-admin-token-123';
   const url = await createTestServer(t, { adminToken });

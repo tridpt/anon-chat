@@ -83,6 +83,7 @@ const feedbackSkip = document.getElementById('feedback-skip');
 const feedbackSubmit = document.getElementById('feedback-submit');
 const feedbackError = document.getElementById('feedback-error');
 const feedbackUnsafeActions = document.getElementById('feedback-unsafe-actions');
+const feedbackNotAMatchReasons = document.getElementById('feedback-not-a-match-reasons');
 const feedbackReportBlock = document.getElementById('feedback-report-block');
 const icebreakerPanel = document.getElementById('icebreaker-panel');
 const icebreakerPrompts = document.getElementById('icebreaker-prompts');
@@ -418,6 +419,7 @@ function queueChatFeedback({ chatId, partnerId, partnerName }) {
   feedbackError.hidden = true;
   feedbackError.innerText = '';
   feedbackUnsafeActions.hidden = true;
+  feedbackNotAMatchReasons.hidden = true;
   if (!feedbackDialog.open) feedbackDialog.showModal();
 }
 
@@ -448,6 +450,16 @@ function selectedFeedbackRating() {
   return feedbackForm.querySelector('input[name="chat-rating"]:checked')?.value || '';
 }
 
+function selectedNotAMatchReason() {
+  return feedbackForm.querySelector('input[name="not-a-match-reason"]:checked')?.value || '';
+}
+
+function updateFeedbackDetails() {
+  const rating = selectedFeedbackRating();
+  feedbackUnsafeActions.hidden = rating !== 'unsafe';
+  feedbackNotAMatchReasons.hidden = rating !== 'not_a_match';
+}
+
 function sendChatRating() {
   if (!pendingFeedback || !socket.connected || feedbackSubmitting) return false;
   const rating = selectedFeedbackRating();
@@ -460,6 +472,9 @@ function sendChatRating() {
     chatId: pendingFeedback.chatId,
     rating,
     comment: feedbackComment.value.trim(),
+    ...(rating === 'not_a_match' && selectedNotAMatchReason()
+      ? { notAMatchReason: selectedNotAMatchReason() }
+      : {}),
   });
   return true;
 }
@@ -1263,7 +1278,7 @@ reportForm.addEventListener('submit', (event) => {
 });
 
 feedbackForm.addEventListener('change', () => {
-  feedbackUnsafeActions.hidden = selectedFeedbackRating() !== 'unsafe';
+  updateFeedbackDetails();
 });
 
 feedbackForm.addEventListener('submit', (event) => {
@@ -1280,7 +1295,7 @@ feedbackReportBlock.addEventListener('click', () => {
   if (!pendingFeedback || !socket.connected) return;
   const unsafeRating = feedbackForm.querySelector('input[value="unsafe"]');
   if (unsafeRating) unsafeRating.checked = true;
-  feedbackUnsafeActions.hidden = false;
+  updateFeedbackDetails();
   if (!sendChatRating()) return;
 
   const note = feedbackComment.value.trim();

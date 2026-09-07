@@ -365,6 +365,37 @@
                 Report and block
               </button>
             </div>
+            <fieldset
+              id="feedback-not-a-match-reasons"
+              class="feedback-not-a-match-reasons"
+              aria-labelledby="feedback-not-a-match-reason-title"
+              hidden
+            >
+              <legend
+                id="feedback-not-a-match-reason-title"
+                data-i18n="feedback_not_a_match_reason_title"
+              >
+                What did not fit? (optional)
+              </legend>
+              <div class="feedback-reason-options" role="radiogroup">
+                <label class="feedback-reason-option">
+                  <input type="radio" name="not-a-match-reason" value="language_mismatch" />
+                  <span data-i18n="feedback_reason_language">Language did not match</span>
+                </label>
+                <label class="feedback-reason-option">
+                  <input type="radio" name="not-a-match-reason" value="different_interests" />
+                  <span data-i18n="feedback_reason_interests">Different interests</span>
+                </label>
+                <label class="feedback-reason-option">
+                  <input type="radio" name="not-a-match-reason" value="conversation_style" />
+                  <span data-i18n="feedback_reason_style">Conversation style did not fit</span>
+                </label>
+                <label class="feedback-reason-option">
+                  <input type="radio" name="not-a-match-reason" value="other" />
+                  <span data-i18n="feedback_reason_other">Something else</span>
+                </label>
+              </div>
+            </fieldset>
             <label for="feedback-comment" data-i18n="feedback_comment_label"
               >Tell us more (optional)</label
             >

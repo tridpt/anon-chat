@@ -28,7 +28,7 @@ Mỗi khách truy cập được gán một `clientId` ngẫu nhiên lưu trong 
 | Giao diện  | Chuyển dark/light theme; đổi ngôn ngữ giao diện Việt/Anh (i18n)                                                                                                  |
 | Thông báo  | Báo trình duyệt khi được ghép cặp/có tin mới lúc tab ẩn; badge + nút xem tin mới khi đang đọc phía trên                                                          |
 | An toàn    | Bỏ qua (skip), chặn (block) có xác nhận, bỏ chặn, báo cáo với lý do, đánh giá sau chat                                                                           |
-| Phản hồi   | Admin xem tỷ lệ đánh giá, xu hướng 14 ngày, và lọc nhanh các transcript bị gắn cờ không an toàn                                                                  |
+| Phản hồi   | Đánh giá sau chat kèm lý do nhanh khi không phù hợp; admin xem tỷ lệ, xu hướng 14 ngày, lý do không phù hợp và lọc chat không an toàn                            |
 | Kiểm duyệt | Lọc từ ngữ xấu, giới hạn link, tự động cấm theo số report; trang `/admin`                                                                                        |
 | Khiếu nại  | Người bị ban gửi appeal; moderator duyệt/từ chối, duyệt sẽ gỡ ban và giữ liên kết report/transcript                                                              |
 | Vận hành   | Endpoint `/health` với số liệu; ban lưu bền vững qua restart                                                                                                     |
@@ -381,6 +381,7 @@ Cờ trạng thái quan trọng: `hasActiveSession`, `isInChat`, `currentPartner
 - Tab **Team** chỉ hiện với admin để tạo account, đổi role/mật khẩu, và bật/tắt moderator.
 - `viewer` chỉ đọc; `moderator` có thể xử lý report, gỡ ban, và xóa transcript; `admin` có toàn quyền.
 - Dialog sau khi kết thúc chat cho phép chọn đánh giá, ghi chú tùy chọn, và với đánh giá không an toàn có thể tạo report + block gắn với transcript.
+- Khi chọn `not_a_match`, người dùng có thể chọn nhanh một lý do: lệch ngôn ngữ, khác sở thích, cách trò chuyện không hợp, hoặc lý do khác. Lý do là tùy chọn, lưu cùng feedback và được tổng hợp trên Overview admin.
 - Điểm ghép cặp mềm được tính từ phản hồi đối tác: cần ít nhất 2 lượt `positive`/`not_a_match`, giới hạn trong khoảng -5..5, và chỉ dùng để phá hòa trong cùng một tầng tương thích. Người mới hoặc chưa đủ dữ liệu giữ điểm trung lập; `unsafe` không tham gia xếp hạng.
 - Có nút đăng xuất, tự khôi phục phiên khi tải lại, và tự yêu cầu đăng nhập lại khi phiên hết hạn.
 - Liệt kê báo cáo, lọc theo trạng thái, mỗi báo cáo là một thẻ cho phép đổi `status` và ghi `moderationNote`, lưu qua `PATCH /api/admin/reports/:id`.

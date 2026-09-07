@@ -20,6 +20,8 @@ Anonymous, one-on-one chat with language-compatible matching. GhostChat does not
 - Insert emojis from a built-in picker and switch between dark and light themes (saved per browser).
 - Show an expiring partner-typing indicator, preserve your reading position for new messages, and provide sound/browser notifications when the tab is hidden.
 - Ask for a post-chat rating (good fit, not a match, or unsafe) with an optional comment; unsafe feedback can report and block the partner after the chat ends.
+- Let people optionally explain a "not a match" rating with language, interests, conversation
+  style, or another reason; moderators see the reason mix in the feedback dashboard.
 - View a 14-day feedback pulse in the admin Overview, including rating mix, daily trend, and a direct unsafe-chat review filter.
 - Switch the interface language between English and Vietnamese; the choice is detected from the browser and saved per browser.
 - Report a current partner with a reason, then review and resolve reports in `/admin`.

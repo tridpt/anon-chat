@@ -58,6 +58,8 @@ const feedbackUnsafeMeter = document.getElementById('feedback-unsafe-meter');
 const feedbackTrendTotal = document.getElementById('feedback-trend-total');
 const feedbackTrendChart = document.getElementById('feedback-trend-chart');
 const viewUnsafeChatsButton = document.getElementById('view-unsafe-chats');
+const feedbackReasonsSummary = document.getElementById('feedback-reasons-summary');
+const feedbackReasonsContainer = document.getElementById('feedback-not-a-match-reasons');
 const activeBansStat = document.getElementById('stat-active-bans');
 const pendingAppealsStat = document.getElementById('stat-pending-appeals');
 const refreshModeratorsButton = document.getElementById('refresh-moderators');
@@ -94,6 +96,12 @@ let realtimeRefreshKinds = new Set();
 const notificationCounts = { reports: 0, appeals: 0 };
 
 const notificationBadges = { reports: reportsBadge, appeals: appealsBadge };
+const notAMatchReasonLabels = {
+  language_mismatch: 'Language did not match',
+  different_interests: 'Different interests',
+  conversation_style: 'Conversation style did not fit',
+  other: 'Something else',
+};
 
 function hasNotificationKind(kind) {
   return Object.prototype.hasOwnProperty.call(notificationCounts, kind);
@@ -297,6 +305,55 @@ function updateFeedbackDashboard(analytics = {}) {
     if (entry.unsafe) bar.classList.add('has-unsafe');
     feedbackTrendChart.appendChild(bar);
   });
+
+  updateNotAMatchReasons(analytics.notAMatchReasons);
+}
+
+function updateNotAMatchReasons(data = {}) {
+  const total = Number(data.total) || 0;
+  const classifiedTotal = Number(data.classifiedTotal) || 0;
+  const unclassified = Number(data.unclassified) || 0;
+  const reasons = data.reasons || {};
+  feedbackReasonsSummary.innerText = total
+    ? `${classifiedTotal} of ${total} "Not a fit" rating${total === 1 ? '' : 's'} included a reason${unclassified ? ` · ${unclassified} skipped` : ''}.`
+    : 'No "Not a fit" ratings have been submitted yet.';
+  feedbackReasonsContainer.innerHTML = '';
+
+  Object.entries(notAMatchReasonLabels).forEach(([reason, label]) => {
+    const count = Number(reasons[reason]) || 0;
+    const row = document.createElement('div');
+    row.className = 'feedback-reason-row';
+    const labelElement = document.createElement('span');
+    labelElement.className = 'feedback-reason-label';
+    labelElement.innerText = label;
+    const countElement = document.createElement('strong');
+    countElement.className = 'feedback-reason-count';
+    countElement.innerText = `${count} (${percentOfTotal(count, classifiedTotal)}%)`;
+    const meter = document.createElement('div');
+    meter.className = 'feedback-reason-meter';
+    const meterFill = document.createElement('span');
+    meterFill.style.width = `${percentOfTotal(count, classifiedTotal)}%`;
+    meter.appendChild(meterFill);
+    row.append(labelElement, countElement, meter);
+    feedbackReasonsContainer.appendChild(row);
+  });
+
+  if (unclassified) {
+    const row = document.createElement('div');
+    row.className = 'feedback-reason-row unclassified';
+    const labelElement = document.createElement('span');
+    labelElement.className = 'feedback-reason-label';
+    labelElement.innerText = 'No reason selected';
+    const countElement = document.createElement('strong');
+    countElement.className = 'feedback-reason-count';
+    countElement.innerText = String(unclassified);
+    row.append(labelElement, countElement);
+    feedbackReasonsContainer.appendChild(row);
+  }
+}
+
+function formatNotAMatchReason(reason) {
+  return notAMatchReasonLabels[reason] || '';
 }
 
 function getSavedTab() {
@@ -1215,7 +1272,10 @@ function createChatCard(chat) {
       const item = document.createElement('p');
       const label =
         entry.rating === 'positive' ? 'Good' : entry.rating === 'unsafe' ? 'Unsafe' : 'Not a fit';
-      item.innerText = `${label}${entry.comment ? `: ${entry.comment}` : ''}`;
+      const reason =
+        entry.rating === 'not_a_match' ? formatNotAMatchReason(entry.notAMatchReason) : '';
+      const details = [reason, entry.comment].filter(Boolean).join(' · ');
+      item.innerText = `${label}${details ? `: ${details}` : ''}`;
       feedback.appendChild(item);
     });
   }

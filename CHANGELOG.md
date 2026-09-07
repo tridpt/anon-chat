@@ -43,6 +43,8 @@ and the project follows [Semantic Versioning](https://semver.org/).
   unrated visitors neutral and preserving queue order for ties.
 - A "not a match" rating now places that exact pair in a durable 30-day rematch cooldown;
   the cooldown is bidirectional and does not restrict either visitor from other matches.
+- Quick optional reasons for "not a match" ratings (language, interests, conversation style, or
+  other), with an admin breakdown for identifying pairing gaps.
 
 ### Changed
 

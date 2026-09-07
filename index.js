@@ -166,6 +166,12 @@ const APPEAL_STATUSES = new Set(['pending', 'approved', 'rejected']);
 const MODERATION_ACTIONS = new Set(['none', 'chat_block', 'permanent_ban']);
 const CHAT_FEEDBACK_RATINGS = new Set(['positive', 'not_a_match', 'unsafe']);
 const CHAT_FEEDBACK_FILTERS = new Set(['', 'unsafe', 'rated', 'unrated']);
+const CHAT_NOT_A_MATCH_REASONS = new Set([
+  'language_mismatch',
+  'different_interests',
+  'conversation_style',
+  'other',
+]);
 const MATCH_QUALITY_MIN_RATINGS = 2;
 const MATCH_QUALITY_MAX_SCORE = 5;
 const MATCH_NOT_A_MATCH_COOLDOWN_MS = 30 * 24 * 60 * 60 * 1000;
@@ -398,11 +404,21 @@ function parseChatFeedback(data) {
       error: `Feedback comments can be at most ${LIMITS.maxChatFeedbackCommentLength} characters.`,
     };
   }
+  if (
+    typeof data.notAMatchReason !== 'undefined' &&
+    (data.rating !== 'not_a_match' || !CHAT_NOT_A_MATCH_REASONS.has(data.notAMatchReason))
+  ) {
+    return { error: 'Choose a valid reason for this rating.' };
+  }
   return {
     value: {
       chatId: data.chatId,
       rating: data.rating,
       comment: typeof data.comment === 'string' ? cleanText(data.comment) : '',
+      notAMatchReason:
+        data.rating === 'not_a_match' && CHAT_NOT_A_MATCH_REASONS.has(data.notAMatchReason)
+          ? data.notAMatchReason
+          : null,
     },
   };
 }
@@ -892,6 +908,9 @@ function createChatStore(dataDirectory, retentionDays = 30) {
       clientId: feedback.clientId,
       rating: feedback.rating,
       comment: typeof feedback.comment === 'string' ? feedback.comment : '',
+      notAMatchReason: CHAT_NOT_A_MATCH_REASONS.has(feedback.notAMatchReason)
+        ? feedback.notAMatchReason
+        : null,
       createdAt: feedback.createdAt,
     };
   }
@@ -984,6 +1003,7 @@ function createChatStore(dataDirectory, retentionDays = 30) {
             clientId: feedback.clientId,
             rating: feedback.rating,
             comment: feedback.comment,
+            notAMatchReason: feedback.notAMatchReason,
             createdAt: feedback.createdAt,
           },
         ];
@@ -1142,6 +1162,12 @@ function createChatStore(dataDirectory, retentionDays = 30) {
           unsafe: 0,
           chatsWithUnsafe: 0,
         };
+        const notAMatchReasons = {
+          total: 0,
+          classifiedTotal: 0,
+          unclassified: 0,
+          reasons: Object.fromEntries([...CHAT_NOT_A_MATCH_REASONS].map((reason) => [reason, 0])),
+        };
         chats.forEach((chat) => {
           const entries = feedbackSummary(chat).feedback;
           let chatHasUnsafe = false;
@@ -1154,6 +1180,15 @@ function createChatStore(dataDirectory, retentionDays = 30) {
             if (Number.isNaN(createdAt) || createdAt < startMs) return;
             periodSummary.total += 1;
             periodSummary[entry.rating] += 1;
+            if (entry.rating === 'not_a_match') {
+              notAMatchReasons.total += 1;
+              if (entry.notAMatchReason) {
+                notAMatchReasons.classifiedTotal += 1;
+                notAMatchReasons.reasons[entry.notAMatchReason] += 1;
+              } else {
+                notAMatchReasons.unclassified += 1;
+              }
+            }
             if (entry.rating === 'unsafe') periodChatHasUnsafe = true;
             const day = dailyByDate.get(new Date(createdAt).toISOString().slice(0, 10));
             if (day) {
@@ -1164,7 +1199,7 @@ function createChatStore(dataDirectory, retentionDays = 30) {
           if (periodChatHasUnsafe) periodSummary.chatsWithUnsafe += 1;
           if (chatHasUnsafe) summary.chatsWithUnsafe += 1;
         });
-        return { days, summary, periodSummary, daily };
+        return { days, summary, periodSummary, daily, notAMatchReasons };
       }),
     remove: (id) =>
       enqueue(async () => {
@@ -3799,6 +3834,7 @@ function createChatServer({
             clientId: socket.clientId,
             rating: parsed.value.rating,
             comment: parsed.value.comment,
+            notAMatchReason: parsed.value.notAMatchReason,
             createdAt: new Date().toISOString(),
           });
           if (result.error === 'not_found') {

@@ -653,6 +653,72 @@ h2 {
   background: linear-gradient(180deg, var(--danger), rgba(239, 107, 103, 0.38));
 }
 
+.feedback-reasons-panel {
+  margin-top: 22px;
+  padding-top: 19px;
+  border-top: 1px solid rgba(190, 235, 220, 0.1);
+}
+
+.feedback-reasons-heading h3 {
+  margin: 5px 0 5px;
+  font-size: 17px;
+}
+
+.feedback-reasons-heading p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.feedback-reasons-list {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 9px;
+  margin-top: 15px;
+}
+
+.feedback-reason-row {
+  display: grid;
+  gap: 7px;
+  padding: 11px;
+  border: 1px solid rgba(190, 235, 220, 0.1);
+  border-radius: 11px;
+  background: rgba(15, 29, 33, 0.32);
+}
+
+.feedback-reason-label {
+  min-height: 31px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.feedback-reason-count {
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.feedback-reason-meter {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(190, 235, 220, 0.1);
+}
+
+.feedback-reason-meter span {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 360ms ease;
+}
+
+.feedback-reason-row.unclassified {
+  border-style: dashed;
+}
+
 .report-list {
   display: grid;
   gap: 13px;
@@ -1422,6 +1488,10 @@ h2 {
 
   .feedback-dashboard-heading button {
     width: 100%;
+  }
+
+  .feedback-reasons-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .audit-topline {

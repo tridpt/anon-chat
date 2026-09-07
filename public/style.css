@@ -932,6 +932,56 @@ body {
   margin: 0;
 }
 
+.feedback-not-a-match-reasons {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.feedback-not-a-match-reasons legend {
+  margin-bottom: 2px;
+  padding: 0;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.feedback-reason-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.feedback-reason-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--glass-border);
+  border-radius: 9px;
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.3;
+  cursor: pointer;
+  transition:
+    border-color 0.18s ease,
+    background 0.18s ease;
+}
+
+.feedback-reason-option:hover,
+.feedback-reason-option:has(input:checked) {
+  border-color: var(--accent);
+  background: rgba(243, 160, 108, 0.1);
+}
+
+.feedback-reason-option input {
+  flex: 0 0 auto;
+  accent-color: var(--accent);
+}
+
 .blocked-list {
   display: grid;
   gap: 8px;
