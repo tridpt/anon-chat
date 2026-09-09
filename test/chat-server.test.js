@@ -621,6 +621,39 @@ test('does not rematch a client with a blocked partner', async (t) => {
   assert.equal((await caraMatched).partnerName, 'Alice');
 });
 
+test('does not immediately rematch a pair after skip', async (t) => {
+  const url = await createTestServer(t);
+  const alice = await connectClient(t, url);
+  const bob = await connectClient(t, url);
+  const cara = await connectClient(t, url);
+  const aliceId = 'client-alice-12345';
+  const bobId = 'client-bob-123456';
+  const caraId = 'client-cara-12345';
+
+  const aliceMatched = waitForEvent(alice, 'matched');
+  const bobMatched = waitForEvent(bob, 'matched');
+  login(alice, { username: 'Alice', interests: 'games', clientId: aliceId });
+  login(bob, { username: 'Bob', interests: 'games', clientId: bobId });
+  await Promise.all([aliceMatched, bobMatched]);
+
+  const bobLeft = waitForEvent(bob, 'partner_left');
+  const aliceQueued = waitForEvent(alice, 'queued');
+  alice.emit('skip');
+  await Promise.all([bobLeft, aliceQueued]);
+
+  const bobQueued = waitForEvent(bob, 'queued');
+  bob.emit('skip');
+  await bobQueued;
+  await Promise.all([expectNoEvent(alice, 'matched'), expectNoEvent(bob, 'matched')]);
+
+  const aliceMatchedAgain = waitForEvent(alice, 'matched');
+  const caraMatched = waitForEvent(cara, 'matched');
+  login(cara, { username: 'Cara', interests: 'games', clientId: caraId });
+  const [aliceMatch, caraMatch] = await Promise.all([aliceMatchedAgain, caraMatched]);
+  assert.equal(aliceMatch.partnerName, 'Cara');
+  assert.equal(caraMatch.partnerName, 'Alice');
+});
+
 test('does not rematch a pair after a not-a-match rating during the cooldown', async (t) => {
   const url = await createTestServer(t);
   const alice = await connectClient(t, url);

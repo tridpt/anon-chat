@@ -58,6 +58,8 @@ const LIMITS = {
   maxBlockedClientIds: 100,
   maxQueueSize: 1000,
   fallbackMatchMs: 5_000,
+  // Keep a skipped pair apart long enough to prevent an immediate rematch.
+  skipCooldownMs: 10 * 60_000,
   maxPayloadBytes: 10_000,
   messageRate: { max: 8, windowMs: 10_000 },
   typingRate: { max: 1, windowMs: 750 },
@@ -1818,6 +1820,7 @@ function createChatServer({
   const recentReportsByClient = new Map();
   const bannedClients = new Map();
   const notAMatchCooldowns = new Map();
+  const skipCooldowns = new Map();
   let notAMatchCooldownsReady = false;
   let settingsReady = false;
   let settingsInitialization = Promise.resolve();
@@ -1832,6 +1835,7 @@ function createChatServer({
     queue: 'anon:mm:queue', // HASH: socketId -> entry JSON
     lock: 'anon:mm:lock', // string: single-matcher lock (SET NX PX)
     totalMatches: 'anon:mm:totalMatches', // integer counter
+    skipCooldowns: 'anon:mm:skipCooldowns', // HASH: client pair key -> expiry timestamp
     room: (roomId) => `anon:mm:room:${roomId}`, // JSON: [member, member]
   };
   const ROOM_TTL_SECONDS = 24 * 60 * 60;
@@ -3451,6 +3455,55 @@ function createChatServer({
     return true;
   }
 
+  async function setSkipCooldown(clientId1, clientId2, createdAt = Date.now()) {
+    if (!isClientId(clientId1) || !isClientId(clientId2) || clientId1 === clientId2) return;
+    const timestamp = typeof createdAt === 'string' ? Date.parse(createdAt) : createdAt;
+    if (!Number.isFinite(timestamp)) return;
+    const expiresAt = timestamp + LIMITS.skipCooldownMs;
+    if (expiresAt <= Date.now()) return;
+
+    const key = makeClientPairKey(clientId1, clientId2);
+    skipCooldowns.set(key, Math.max(skipCooldowns.get(key) ?? 0, expiresAt));
+    if (distributedEnabled()) {
+      try {
+        await redisCmd.hSet(REDIS_KEYS.skipCooldowns, key, String(expiresAt));
+      } catch (error) {
+        logError(error);
+      }
+    }
+  }
+
+  function isSkipCooldownActive(clientId1, clientId2, now = Date.now()) {
+    const key = makeClientPairKey(clientId1, clientId2);
+    const expiresAt = skipCooldowns.get(key);
+    if (!expiresAt) return false;
+    if (expiresAt <= now) {
+      skipCooldowns.delete(key);
+      return false;
+    }
+    return true;
+  }
+
+  async function loadDistributedSkipCooldowns() {
+    if (!distributedEnabled()) return;
+    try {
+      const raw = await redisCmd.hGetAll(REDIS_KEYS.skipCooldowns);
+      const now = Date.now();
+      const expired = [];
+      for (const [key, value] of Object.entries(raw)) {
+        const expiresAt = Number(value);
+        if (!Number.isFinite(expiresAt) || expiresAt <= now) {
+          expired.push(key);
+          continue;
+        }
+        skipCooldowns.set(key, Math.max(skipCooldowns.get(key) ?? 0, expiresAt));
+      }
+      if (expired.length > 0) await redisCmd.hDel(REDIS_KEYS.skipCooldowns, expired);
+    } catch (error) {
+      logError(error);
+    }
+  }
+
   function enqueue(socket) {
     if (socket.disconnected || socket.currentRoom) return false;
     if (socket.isQueued) return true;
@@ -3542,6 +3595,7 @@ function createChatServer({
       user1.clientId !== user2.clientId &&
       !user1.blockedClientIds.has(user2.clientId) &&
       !user2.blockedClientIds.has(user1.clientId) &&
+      !isSkipCooldownActive(user1.clientId, user2.clientId) &&
       !isNotAMatchCooldownActive(user1.clientId, user2.clientId)
     );
   }
@@ -3735,6 +3789,7 @@ function createChatServer({
       a.clientId !== b.clientId &&
       !a.blockedClientIds.includes(b.clientId) &&
       !b.blockedClientIds.includes(a.clientId) &&
+      !isSkipCooldownActive(a.clientId, b.clientId) &&
       !isNotAMatchCooldownActive(a.clientId, b.clientId)
     );
   }
@@ -3783,6 +3838,7 @@ function createChatServer({
 
     let changed = false;
     try {
+      await loadDistributedSkipCooldowns();
       const raw = await redisCmd.hGetAll(REDIS_KEYS.queue);
       const entries = [];
       for (const value of Object.values(raw)) {
@@ -4169,7 +4225,7 @@ function createChatServer({
 
     socket.on(
       'skip',
-      safelyHandle(socket, () => {
+      safelyHandle(socket, async () => {
         if (!socket.hasLoggedIn) {
           sendError(socket, 'invalid_state', 'Start a chat before skipping.');
           return;
@@ -4180,6 +4236,9 @@ function createChatServer({
           return;
         }
 
+        if (socket.partnerInfo) {
+          await setSkipCooldown(socket.clientId, socket.partnerInfo.clientId);
+        }
         removeFromQueue(socket);
         handleLeaveRoom(socket);
         enqueue(socket);
