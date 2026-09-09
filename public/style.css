@@ -1421,7 +1421,8 @@ body {
 .install-app-btn {
   position: absolute;
   top: 18px;
-  left: 68px;
+  /* Match the left edge of the centered chat surface on wide screens. */
+  left: max(24px, calc(50% - 540px));
   z-index: 20;
   min-height: 42px;
   display: inline-flex;

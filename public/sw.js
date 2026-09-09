@@ -1,8 +1,8 @@
-const CACHE_NAME = 'ghostchat-shell-v2';
+const CACHE_NAME = 'ghostchat-shell-v3';
 const APP_SHELL = [
   '/',
   '/index.html',
-  '/style.css?v=7',
+  '/style.css?v=8',
   '/i18n.js?v=3',
   '/script.js?v=4',
   '/manifest.webmanifest',
